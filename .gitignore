@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.js.map
+
+# agent-relay internals (handoffs are committed, internals are not)
+.relay/
+.cursor
+.claude
+.codex
+wiki/
