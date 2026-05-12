@@ -13,6 +13,16 @@ function isGitRepo(cwd: string): boolean {
   return run('git rev-parse --git-dir', cwd) !== '';
 }
 
+/** Cap each file's diff section individually, preserving all file headers */
+function capDiffPerFile(rawDiff: string, maxPerFile: number): string {
+  if (!rawDiff) return '';
+  const sections = rawDiff.split(/(?=^diff --git )/m);
+  return sections.map(s =>
+    s.length <= maxPerFile ? s
+      : s.slice(0, maxPerFile) + `\n... [file diff truncated — run \`git diff HEAD\` for full diff]\n`,
+  ).join('');
+}
+
 export function captureGitState(cwd: string, maxDiffChars = 8000): GitState {
   if (!isGitRepo(cwd)) {
     return {
@@ -30,11 +40,7 @@ export function captureGitState(cwd: string, maxDiffChars = 8000): GitState {
   const branch = run('git branch --show-current', cwd) || run('git rev-parse --short HEAD', cwd);
   const statusRaw = run('git status --short', cwd);
   const diffStat = run('git diff --stat HEAD', cwd);
-  let diff = run('git diff HEAD', cwd);
-
-  if (diff.length > maxDiffChars) {
-    diff = diff.slice(0, maxDiffChars) + `\n\n... [diff truncated at ${maxDiffChars} chars, run \`git diff HEAD\` for full diff]`;
-  }
+  const diff = capDiffPerFile(run('git diff HEAD', cwd), maxDiffChars);
 
   const recentCommits = run('git log --oneline -8', cwd);
 

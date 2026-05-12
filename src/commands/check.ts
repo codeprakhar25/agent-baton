@@ -2,19 +2,20 @@
  * relay check --from <agent> --event <event>
  *
  * Called by hooks in all three agents on every stop/turn-end event.
- * Reads JSON from stdin (hook payload), checks thresholds, and:
+ * Reads JSON from stdin (hook payload), checks thresholds, and responds
+ * with one of three graduated stages:
  *
- * - Below threshold: outputs {} and exits (no-op)
- * - Above threshold, no handoff written yet: tells agent to write the handoff
- * - Handoff already written: outputs a block/stop signal so user can transfer
- *
- * This is the CLEAN PATH entry point.
+ * - warn (85-89%):    soft followup — keep working, stay on current subtask
+ * - prepare (90-94%): wrap-up followup — finish current step, stop
+ * - handoff (≥95%):   no fresh handoff → ask agent to write one
+ *                     fresh handoff exists → append git context, block
  */
 
 import fs from 'fs';
 import path from 'path';
-import type { HookPayload, HookResponse, AgentName } from '../types.js';
+import type { HookPayload, HookResponse, AgentName, RelayConfig, ThresholdStage } from '../types.js';
 import { loadConfig, getHandoffDir, getLatestHandoffPath } from '../config.js';
+import { captureGitState } from '../extractors/git.js';
 
 /** Maximum age of an existing handoff to consider it "fresh" (3 minutes) */
 const HANDOFF_FRESH_MS = 3 * 60 * 1000;
@@ -26,80 +27,142 @@ export async function runCheck(agent: AgentName, event: string, cwd: string): Pr
   try {
     payload = JSON.parse(rawInput);
   } catch {
-    // Hooks may send empty or non-JSON in some edge cases — treat as no-op
     respond({});
     return;
   }
 
   const cfg = loadConfig(cwd);
-  const threshold = cfg.thresholds.context_window_percent;
   const usedPct = payload.context_window?.used_percentage ?? null;
 
-  // No context data in payload — can't make a decision, pass through
   if (usedPct === null) {
     respond({});
     return;
   }
 
-  if (usedPct < threshold) {
-    // Under threshold: no-op, let the agent keep going
+  const stage = resolveStage(usedPct, cfg);
+
+  if (stage === 'none') {
     respond({});
     return;
   }
 
-  // We are above threshold.
-  // Check if a fresh handoff was already written (agent obeyed our earlier followup_message).
+  if (stage === 'warn') {
+    respond({
+      followup_message: `⚡ RELAY: Context at ${usedPct.toFixed(0)}%. Keep working — but stay on your current subtask only. Do not start anything new.`,
+    });
+    return;
+  }
+
+  if (stage === 'prepare') {
+    respond({
+      followup_message: `⚠️  RELAY: Context at ${usedPct.toFixed(0)}%. Finish the step you are currently on and stop. Do NOT start new subtasks. A handoff will be requested soon.`,
+    });
+    return;
+  }
+
+  // stage === 'handoff'
   const existingHandoff = getLatestHandoffPath(cwd);
   if (existingHandoff) {
     const age = Date.now() - fs.statSync(existingHandoff).mtimeMs;
     if (age < HANDOFF_FRESH_MS) {
-      // Handoff was written — write the "pending transfer" flag and let the agent stop naturally.
+      appendGitContext(existingHandoff, cwd, cfg);
       writePendingFlag(cwd, agent, usedPct, existingHandoff);
-      // Return a block decision so the agent stops and the user sees the message in the terminal.
-      const response: HookResponse = {
+      respond({
         decision: 'block',
         reason: buildTransferPrompt(agent, usedPct, existingHandoff),
-      };
-      respond(response);
+      });
       return;
     }
   }
 
-  // No fresh handoff yet — ask the agent to write one as its next action.
-  const followup = buildHandoffRequestMessage(agent, usedPct, cwd);
-  const response: HookResponse = { followup_message: followup };
-  respond(response);
+  respond({ followup_message: buildHandoffRequestMessage(agent, usedPct, cwd) });
+}
+
+function resolveStage(usedPct: number, cfg: RelayConfig): ThresholdStage {
+  const f = cfg.dev?.force_threshold ?? null;
+  const warn    = f ?? cfg.thresholds.warn_percent;
+  const prepare = f ?? cfg.thresholds.prepare_percent;
+  const handoff = f ?? cfg.thresholds.handoff_percent;
+  if (usedPct >= handoff) return 'handoff';
+  if (usedPct >= prepare) return 'prepare';
+  if (usedPct >= warn)    return 'warn';
+  return 'none';
+}
+
+function appendGitContext(handoffPath: string, cwd: string, cfg: RelayConfig): void {
+  try {
+    const existing = fs.readFileSync(handoffPath, 'utf8');
+    if (existing.includes('<!-- relay:git-appended -->')) return;
+
+    const git = captureGitState(cwd, cfg.context_extraction.max_diff_chars);
+
+    const appended = [
+      ``,
+      `<!-- relay:git-appended -->`,
+      `---`,
+      `## Git State (appended by relay)`,
+      ``,
+      `**Branch:** \`${git.branch}\`  |  **Uncommitted changes:** ${git.hasUncommittedChanges ? 'Yes' : 'No'}`,
+      ``,
+      `### Modified Files`,
+      `\`\`\``,
+      git.status || '(clean)',
+      `\`\`\``,
+      ``,
+      `### Diff Stat`,
+      `\`\`\``,
+      git.diffStat || '(none)',
+      `\`\`\``,
+      ``,
+      `### Recent Commits`,
+      `\`\`\``,
+      git.recentCommits || '(none)',
+      `\`\`\``,
+      ``,
+      `### Uncommitted Diff`,
+      git.diff ? `\`\`\`diff\n${git.diff}\n\`\`\`` : '(no uncommitted diff)',
+    ].join('\n');
+
+    const updated = existing + appended;
+    fs.writeFileSync(handoffPath, updated, 'utf8');
+
+    const latestPath = path.join(path.dirname(handoffPath), 'HANDOFF-latest.md');
+    if (handoffPath !== latestPath) {
+      fs.writeFileSync(latestPath, updated, 'utf8');
+    }
+  } catch { /* best effort */ }
 }
 
 function buildHandoffRequestMessage(agent: AgentName, usedPct: number, cwd: string): string {
   const handoffDir = getHandoffDir(cwd);
-  const filename = `HANDOFF-latest.md`;
-  const handoffPath = path.join(handoffDir, filename);
+  const handoffPath = path.join(handoffDir, 'HANDOFF-latest.md');
 
   return [
-    `⚠️  RELAY NOTICE: Your context window is at ${usedPct.toFixed(0)}% — you are approaching your limit.`,
+    `🚨 RELAY — CRITICAL: Context is at ${usedPct.toFixed(0)}%. You have ONE response left.`,
     ``,
-    `Before your context fills completely, write a handoff document to \`${handoffPath}\` using this exact format:`,
+    `Write a handoff document to \`${handoffPath}\` RIGHT NOW using exactly this format:`,
     ``,
     `# Relay Handoff: <one-line task summary>`,
     ``,
     `## Task Description`,
-    `<what is the overall goal>`,
+    `<what is the overall goal — be specific>`,
     ``,
     `## Progress`,
-    `- [x] <completed item>`,
-    `- [ ] <remaining item>`,
+    `- [x] <completed item 1>`,
+    `- [x] <completed item 2>`,
+    `- [ ] <remaining item — what is still left>`,
     ``,
     `## Key Decisions Made`,
-    `- <important architectural/design decision you made and why>`,
+    `- <decision and WHY you made it>`,
     ``,
     `## Current State`,
-    `<exactly what you were doing when you stopped — be specific>`,
+    `<exactly what you were doing when you stopped. Which file. Which function. What the next step is.>`,
     ``,
     `## Errors / Blockers`,
-    `- <any errors or blockers encountered>`,
+    `- <any errors or things that blocked you>`,
     ``,
-    `After writing this file, stop. Do not start new tasks. The relay will transfer your work to another agent.`,
+    `IMPORTANT: Write ONLY this file. Do not run any tools after writing it. Do not summarize. Just write the file and stop.`,
+    `The relay will automatically capture git state and offer the next agent to continue.`,
   ].join('\n');
 }
 
@@ -152,7 +215,6 @@ function readStdin(): Promise<string> {
     process.stdin.on('data', (chunk: Buffer) => chunks.push(chunk));
     process.stdin.on('end', done);
     process.stdin.on('error', done);
-    // Fallback timeout in case stdin never closes (non-piped invocation)
     setTimeout(done, 2000);
   });
 }
