@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * relay — cross-agent limit-aware handoff tool
  *
