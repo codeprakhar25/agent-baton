@@ -1,5 +1,7 @@
 export type AgentName = 'cursor' | 'claude' | 'codex';
 
+export type ThresholdStage = 'warn' | 'prepare' | 'handoff' | 'none';
+
 export interface RelayConfig {
   agents: {
     cursor: AgentConfig;
@@ -7,10 +9,18 @@ export interface RelayConfig {
     codex: AgentConfig;
   };
   thresholds: {
-    /** Trigger handoff when context window usage exceeds this % */
-    context_window_percent: number;
+    /** Soft warning — keep working but stay on current subtask */
+    warn_percent: number;
+    /** Wrap-up directive — finish current step and stop */
+    prepare_percent: number;
+    /** Handoff trigger — write handoff document now */
+    handoff_percent: number;
     /** Trigger handoff when subscription rate limit exceeds this % */
     rate_limit_percent: number;
+  };
+  dev: {
+    /** If set, overrides all three threshold checks with this single value (for testing) */
+    force_threshold?: number;
   };
   handoff_dir: string;
   context_extraction: {

@@ -9,9 +9,12 @@ const DEFAULT_CONFIG: RelayConfig = {
     codex:  { enabled: true, priority: 3 },
   },
   thresholds: {
-    context_window_percent: 85,
+    warn_percent: 85,
+    prepare_percent: 90,
+    handoff_percent: 95,
     rate_limit_percent: 90,
   },
+  dev: {},
   handoff_dir: '.relay/handoffs',
   context_extraction: {
     max_transcript_lines: 100,

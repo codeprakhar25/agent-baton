@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * relay — cross-agent limit-aware handoff tool
  *
@@ -80,6 +79,15 @@ program
     const toAgent = opts.to ? assertAgent(opts.to) : undefined;
     const { runPickup } = await import('./commands/handoff.js');
     await runPickup(process.cwd(), toAgent);
+  });
+
+program
+  .command('threshold [value]')
+  .description('[DEV] Override all context thresholds for testing. relay threshold 10 → triggers at 10%. relay threshold --reset → restore real values.')
+  .option('--reset', 'Clear the override and use real thresholds')
+  .action(async (value, opts) => {
+    const { runThreshold } = await import('./commands/threshold.js');
+    runThreshold(value, opts.reset ?? false, process.cwd());
   });
 
 program.parseAsync(process.argv).catch((err) => {

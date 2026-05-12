@@ -21,7 +21,7 @@
 import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
-import type { AgentName, WatchState } from '../types.js';
+import type { AgentName, WatchState, HandoffDocument } from '../types.js';
 import { loadConfig, getWatchStatePath, getRelayDir, getLatestHandoffPath } from '../config.js';
 import { captureGitState } from '../extractors/git.js';
 import { extractSession } from '../extractors/transcript/index.js';
@@ -29,6 +29,7 @@ import { buildHandoffDoc, writeHandoff } from '../writers/handoff.js';
 import { findActiveClaudeTranscript } from '../extractors/transcript/claude.js';
 import { findActiveCursorTranscript } from '../extractors/transcript/cursor.js';
 import { findActiveCodexTranscript } from '../extractors/transcript/codex.js';
+import { detectRateLimitHit } from '../monitors/rate-limit.js';
 
 function findActiveTranscript(agent: AgentName, cwd: string): string | null {
   switch (agent) {
@@ -67,11 +68,21 @@ function hasPendingTransfer(cwd: string): boolean {
   return fs.existsSync(path.join(getRelayDir(cwd), 'pending-transfer.json'));
 }
 
-async function doEmergencyExtraction(agent: AgentName, transcriptPath: string, cwd: string): Promise<void> {
+async function doEmergencyExtraction(
+  agent: AgentName,
+  transcriptPath: string,
+  cwd: string,
+  reason: HandoffDocument['reason'] = 'emergency',
+): Promise<void> {
   const cfg = loadConfig(cwd);
 
+  const isRateLimit = reason === 'rate_limit';
   console.error(chalk.red.bold(`\n╔══════════════════════════════════════════════════════╗`));
-  console.error(chalk.red.bold(`║  RELAY WATCH: AGENT SESSION APPEARS TO HAVE DIED    ║`));
+  if (isRateLimit) {
+    console.error(chalk.red.bold(`║  RELAY WATCH: RATE LIMIT DETECTED                   ║`));
+  } else {
+    console.error(chalk.red.bold(`║  RELAY WATCH: AGENT SESSION APPEARS TO HAVE DIED    ║`));
+  }
   console.error(chalk.red.bold(`╚══════════════════════════════════════════════════════╝`));
   console.error(chalk.yellow(`\nAgent: ${agent}`));
   console.error(chalk.yellow(`Transcript: ${transcriptPath}`));
@@ -82,7 +93,7 @@ async function doEmergencyExtraction(agent: AgentName, transcriptPath: string, c
 
   const doc = buildHandoffDoc({
     fromAgent: agent,
-    reason: 'emergency',
+    reason,
     git,
     session,
     taskDescription: session.lastUserMessage ?? 'Unknown — see transcript tail',
@@ -105,12 +116,24 @@ async function doEmergencyExtraction(agent: AgentName, transcriptPath: string, c
   console.error(chalk.cyan(`  to select the next agent and continue the task.\n`));
 }
 
+function readTailBytes(filePath: string, byteCount: number): string {
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    const stat = fs.fstatSync(fd);
+    const start = Math.max(0, stat.size - byteCount);
+    const buf = Buffer.alloc(stat.size - start);
+    fs.readSync(fd, buf, 0, buf.length, start);
+    fs.closeSync(fd);
+    return buf.toString('utf8');
+  } catch { return ''; }
+}
+
 export async function runWatch(agent: AgentName, cwd: string): Promise<void> {
   const cfg = loadConfig(cwd);
   const { poll_interval_ms, stale_threshold_ms } = cfg.watch;
 
   console.log(chalk.cyan(`relay watch`) + ` — monitoring ${chalk.bold(agent)} session in ${cwd}`);
-  console.log(chalk.gray(`  Context threshold: ${cfg.thresholds.context_window_percent}%`));
+  console.log(chalk.gray(`  Context threshold: ${cfg.thresholds.handoff_percent}%`));
   console.log(chalk.gray(`  Stale detection: ${stale_threshold_ms / 1000}s`));
   console.log(chalk.gray(`  Press Ctrl+C to stop\n`));
 
@@ -151,6 +174,17 @@ export async function runWatch(agent: AgentName, cwd: string): Promise<void> {
     }
 
     if (currentSize > state.lastSeenBytes) {
+      // Scan new bytes for rate limit error patterns before updating state
+      const newContent = readTailBytes(transcriptPath, currentSize - state.lastSeenBytes);
+      const hit = detectRateLimitHit([newContent]);
+      if (hit) {
+        console.error(chalk.red.bold(`[relay watch] Rate limit detected: ${hit.matchedText}`));
+        await doEmergencyExtraction(agent, transcriptPath, cwd, 'rate_limit');
+        state.lastSeenBytes = currentSize;
+        state.lastSeenAt = now;
+        saveWatchState(state, cwd);
+        return;
+      }
       // Transcript is growing — agent is alive and working
       state.lastSeenBytes = currentSize;
       state.lastSeenAt = now;

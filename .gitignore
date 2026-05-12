@@ -8,3 +8,7 @@ dist/
 .claude
 .codex
 wiki/
+.relay/watch-state.json
+.relay/status.json
+.relay/pending-transfer.json
+.relay/config.json
