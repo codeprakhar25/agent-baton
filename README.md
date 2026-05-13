@@ -2,7 +2,7 @@
 
 Transfer work between AI coding agents when a usage limit is close to being reached.
 
-`relay` checks agent usage-limit signals, writes a Markdown handoff with transcript and git state, then lets another agent continue from that handoff.
+`relay` checks agent usage-limit signals, warns before the configured handoff point, and writes a Markdown handoff with transcript and git state when the user or configuration chooses a transfer.
 
 ## Supported Signals
 
@@ -50,7 +50,13 @@ For Claude, `usage` reads `~/.claude/.credentials.json`, calls `https://api.anth
 
 ### `relay guard --from claude --hook`
 
-Command used by Claude hooks. `SessionStart` fetches Claude usage once and writes `.relay/usage-cache.json`. Prompt and tool hooks read only the cache; they do one confirmatory refresh only if cached usage has already crossed `thresholds.rate_limit_percent`, then block with a handoff.
+Command used by Claude hooks. `SessionStart` fetches Claude usage once and writes `.relay/usage-cache.json`. Prompt and tool hooks read only the cache; they do one confirmatory refresh only if cached usage has already crossed `limits.handoff_percent`.
+
+In the default `limits.mode: "ask"` mode:
+
+- `UserPromptSubmit` adds context telling Claude to ask whether to continue or write a handoff.
+- `PreToolUse` denies the tool call until Claude asks that same choice, so edits do not continue silently past the warning.
+- Relay writes `.relay/pending-transfer.json` only when a handoff is actually created, for example with `relay handoff --from claude --reason rate-limit`.
 
 Installed Claude hook events:
 
@@ -60,7 +66,7 @@ Installed Claude hook events:
 
 ### `relay watch --from <agent>`
 
-Run beside the active agent. It monitors usage limits and writes a handoff when the configured threshold is crossed.
+Run beside the active agent. It monitors usage limits and warns when the configured threshold is crossed. It writes a handoff automatically only in `limits.mode: "auto_handoff"` or when hard-limit text is detected and `limits.auto_handoff_on_hard_limit` is enabled.
 
 ```bash
 relay watch --from codex
@@ -76,14 +82,29 @@ For Codex, `watch` reads the active rollout JSONL and checks:
 
 For all agents, it also scans new transcript bytes for hard-limit errors such as `usage limit`, `quota exceeded`, and `429`. Claude should normally use the hook-driven `guard` path instead of `watch`.
 
-### `relay handoff --from <agent> [--launch]`
+### `relay codex [-- <codex args>] [prompt]`
+
+Preflight Codex usage before launching Codex.
+
+```bash
+relay codex
+relay codex "continue the current task"
+relay codex -- --model gpt-5.1
+```
+
+If Codex usage is below `limits.handoff_percent`, Relay launches Codex normally. If usage is above the threshold, Relay asks whether to continue in Codex, create a handoff now, or run `relay pickup`. Continuing injects a first prompt warning Codex to ask the user before doing more work.
+
+### `relay handoff --from <agent> [--reason <reason>] [--launch]`
 
 Manually write a handoff from the current transcript and git state.
 
 ```bash
 relay handoff --from codex
+relay handoff --from claude --reason rate-limit
 relay handoff --from claude --launch
 ```
+
+Creating a handoff also writes `.relay/pending-transfer.json`, which `relay pickup` clears after launching the next agent.
 
 ### `relay pickup [--to <agent>]`
 
@@ -118,6 +139,11 @@ relay init
   "thresholds": {
     "rate_limit_percent": 95
   },
+  "limits": {
+    "mode": "ask",
+    "handoff_percent": 95,
+    "auto_handoff_on_hard_limit": true
+  },
   "usage_cache": {
     "safe_ttl_ms": 900000,
     "near_limit_ttl_ms": 60000,
@@ -140,6 +166,8 @@ relay init
   }
 }
 ```
+
+`thresholds.rate_limit_percent` is kept for older configs. New configs should use `limits.handoff_percent`.
 
 ## Handoff Files
 

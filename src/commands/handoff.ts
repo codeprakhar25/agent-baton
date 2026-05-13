@@ -10,14 +10,19 @@ import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 import { select } from '@inquirer/prompts';
-import type { AgentName } from '../types.js';
-import { loadConfig, getLatestHandoffPath } from '../config.js';
+import type { AgentName, HandoffDocument } from '../types.js';
+import { loadConfig, getLatestHandoffPath, getRelayDir } from '../config.js';
 import { captureGitState } from '../extractors/git.js';
 import { extractSession } from '../extractors/transcript/index.js';
 import { buildHandoffDoc, writeHandoff } from '../writers/handoff.js';
 import { isAgentAvailable, launchAgent, relativeHandoffPath } from '../launchers/index.js';
 
-export async function runHandoff(fromAgent: AgentName, cwd: string, autoLaunch = false): Promise<void> {
+export async function runHandoff(
+  fromAgent: AgentName,
+  cwd: string,
+  autoLaunch = false,
+  reason: HandoffDocument['reason'] = 'manual',
+): Promise<void> {
   const cfg = loadConfig(cwd);
 
   console.log(chalk.bold(`\nrelay handoff — from: ${chalk.cyan(fromAgent)}\n`));
@@ -34,12 +39,13 @@ export async function runHandoff(fromAgent: AgentName, cwd: string, autoLaunch =
   // 3. Build and write handoff
   const doc = buildHandoffDoc({
     fromAgent,
-    reason: 'manual',
+    reason,
     git,
     session,
   });
 
   const handoffPath = writeHandoff(doc, cwd);
+  writePendingTransfer(fromAgent, cwd, handoffPath, reason);
   console.log(chalk.green('✓') + ` Handoff written: ${chalk.bold(handoffPath)}\n`);
 
   if (autoLaunch) {
@@ -50,6 +56,20 @@ export async function runHandoff(fromAgent: AgentName, cwd: string, autoLaunch =
   console.log(`Handoff file: ${chalk.cyan(handoffPath)}`);
   console.log(`\nRun ${chalk.cyan('relay pickup')} to transfer to the next agent.`);
   console.log(`Or open the handoff file to review it before transferring.\n`);
+}
+
+function writePendingTransfer(
+  agent: AgentName,
+  cwd: string,
+  handoffPath: string,
+  reason: HandoffDocument['reason'],
+): void {
+  fs.writeFileSync(path.join(getRelayDir(cwd), 'pending-transfer.json'), JSON.stringify({
+    agent,
+    reason,
+    handoffPath,
+    triggeredAt: new Date().toISOString(),
+  }, null, 2), 'utf8');
 }
 
 export async function runPickup(cwd: string, toAgent?: AgentName): Promise<void> {

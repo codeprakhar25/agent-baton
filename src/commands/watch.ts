@@ -7,14 +7,14 @@
  * 1. Finds the agent's active transcript/usage source
  * 2. Checks usage-limit percentages when the agent exposes them
  * 3. Scans new transcript bytes for hard usage-limit errors
- * 4. Writes a rate-limit handoff and pending-transfer flag when needed
+ * 4. Warns, or writes a rate-limit handoff and pending-transfer flag when configured
  */
 
 import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 import type { AgentName, WatchState } from '../types.js';
-import { loadConfig, getWatchStatePath, getRelayDir, getLatestHandoffPath } from '../config.js';
+import { loadConfig, getWatchStatePath, getRelayDir, getLatestHandoffPath, getUsageLimitPercent } from '../config.js';
 import { captureGitState } from '../extractors/git.js';
 import { extractSession } from '../extractors/transcript/index.js';
 import { buildHandoffDoc, writeHandoff } from '../writers/handoff.js';
@@ -119,20 +119,26 @@ async function writeRateLimitHandoff(
 async function maybeTriggerCodexUsageHandoff(
   transcriptPath: string,
   cwd: string,
-  thresholdPercent: number,
   text?: string,
 ): Promise<boolean> {
+  const cfg = loadConfig(cwd);
   const status = text
     ? parseCodexUsageFromText(text, transcriptPath)
     : readLatestCodexUsage(transcriptPath);
-  const trigger = getCodexUsageTrigger(status, thresholdPercent);
+  const trigger = getCodexUsageTrigger(status, getUsageLimitPercent(cfg));
 
   if (!trigger) return false;
 
   const summary = formatCodexUsageTrigger(trigger);
-  console.error(chalk.red.bold(`[relay watch] ${summary}`));
-  await writeRateLimitHandoff('codex', transcriptPath, cwd, summary);
-  return true;
+  const hardLimit = Boolean(trigger.status.rateLimitReachedType);
+  if (cfg.limits.mode === 'auto_handoff' || (hardLimit && cfg.limits.auto_handoff_on_hard_limit)) {
+    console.error(chalk.red.bold(`[relay watch] ${summary}`));
+    await writeRateLimitHandoff('codex', transcriptPath, cwd, summary);
+    return true;
+  }
+
+  console.error(chalk.yellow(`[relay watch] ${summary}. Ask the user whether to continue or run relay handoff --from codex --reason rate-limit.`));
+  return false;
 }
 
 async function maybeTriggerClaudeUsageHandoff(
@@ -146,9 +152,14 @@ async function maybeTriggerClaudeUsageHandoff(
 
   const transcriptPath = findActiveClaudeTranscript(cwd);
   const summary = status.triggerReason ?? formatNormalizedUsage(status);
-  console.error(chalk.red.bold(`[relay watch] ${summary}`));
-  await writeRateLimitHandoff('claude', transcriptPath, cwd, summary);
-  return true;
+  if (cfg.limits.mode === 'auto_handoff') {
+    console.error(chalk.red.bold(`[relay watch] ${summary}`));
+    await writeRateLimitHandoff('claude', transcriptPath, cwd, summary);
+    return true;
+  }
+
+  console.error(chalk.yellow(`[relay watch] ${summary}. Ask the user whether to continue or run relay handoff --from claude --reason rate-limit.`));
+  return false;
 }
 
 function readTailBytes(filePath: string, byteCount: number): string {
@@ -168,7 +179,8 @@ export async function runWatch(agent: AgentName, cwd: string): Promise<void> {
   const { poll_interval_ms } = cfg.watch;
 
   console.log(chalk.cyan(`relay watch`) + ` — monitoring ${chalk.bold(agent)} session in ${cwd}`);
-  console.log(chalk.gray(`  Usage threshold: ${cfg.thresholds.rate_limit_percent}%`));
+  console.log(chalk.gray(`  Usage threshold: ${getUsageLimitPercent(cfg)}%`));
+  console.log(chalk.gray(`  Limit mode: ${cfg.limits.mode}`));
   console.log(chalk.gray(`  Press Ctrl+C to stop\n`));
 
   let state = loadWatchState(cwd);
@@ -208,7 +220,7 @@ export async function runWatch(agent: AgentName, cwd: string): Promise<void> {
       saveWatchState(state, cwd);
       console.log(chalk.gray(`[relay watch] Tracking transcript: ${path.basename(transcriptPath)}`));
       if (agent === 'codex') {
-        await maybeTriggerCodexUsageHandoff(transcriptPath, cwd, cfg.thresholds.rate_limit_percent);
+        await maybeTriggerCodexUsageHandoff(transcriptPath, cwd);
       }
       return;
     }
@@ -220,7 +232,6 @@ export async function runWatch(agent: AgentName, cwd: string): Promise<void> {
         const triggered = await maybeTriggerCodexUsageHandoff(
           transcriptPath,
           cwd,
-          cfg.thresholds.rate_limit_percent,
           newContent,
         );
         if (triggered) {
@@ -234,8 +245,12 @@ export async function runWatch(agent: AgentName, cwd: string): Promise<void> {
       const hit = detectRateLimitHit([newContent]);
       if (hit) {
         const summary = `Rate limit detected: ${hit.matchedText}`;
-        console.error(chalk.red.bold(`[relay watch] ${summary}`));
-        await writeRateLimitHandoff(agent, transcriptPath, cwd, summary);
+        if (cfg.limits.auto_handoff_on_hard_limit) {
+          console.error(chalk.red.bold(`[relay watch] ${summary}`));
+          await writeRateLimitHandoff(agent, transcriptPath, cwd, summary);
+        } else {
+          console.error(chalk.yellow(`[relay watch] ${summary}. Hard-limit auto-handoff is disabled; run relay handoff --from ${agent} --reason rate-limit when ready.`));
+        }
         state.lastSeenBytes = currentSize;
         state.lastSeenAt = now;
         saveWatchState(state, cwd);

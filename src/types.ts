@@ -7,9 +7,18 @@ export interface RelayConfig {
     codex: AgentConfig;
     gemini: AgentConfig;
   };
+  /** Legacy threshold config. Prefer limits.handoff_percent. */
   thresholds: {
-    /** Trigger handoff when subscription rate limit exceeds this % */
+    /** Legacy handoff threshold when subscription rate limit exceeds this % */
     rate_limit_percent: number;
+  };
+  limits: {
+    /** ask: prompt agent/user choice; auto_handoff: write handoff; warn_only: notify without blocking */
+    mode: 'ask' | 'auto_handoff' | 'warn_only';
+    /** Warn or hand off when usage reaches this percentage */
+    handoff_percent: number;
+    /** Automatically write a handoff when transcript text shows an actual hard limit */
+    auto_handoff_on_hard_limit: boolean;
   };
   usage_cache: {
     /** Cache TTL for manual/status lookups while usage is below the limit */

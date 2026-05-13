@@ -12,6 +12,11 @@ const DEFAULT_CONFIG: RelayConfig = {
   thresholds: {
     rate_limit_percent: 95,
   },
+  limits: {
+    mode: 'ask',
+    handoff_percent: 95,
+    auto_handoff_on_hard_limit: true,
+  },
   usage_cache: {
     safe_ttl_ms: 15 * 60 * 1000,
     near_limit_ttl_ms: 60 * 1000,
@@ -68,10 +73,14 @@ export function loadConfig(cwd: string = process.cwd()): RelayConfig {
   }
   try {
     const raw = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-    return deepMerge(DEFAULT_CONFIG, raw) as RelayConfig;
+    return normalizeConfig(deepMerge(DEFAULT_CONFIG, raw) as RelayConfig, raw);
   } catch {
     return DEFAULT_CONFIG;
   }
+}
+
+export function getUsageLimitPercent(config: RelayConfig): number {
+  return config.limits.handoff_percent;
 }
 
 export function saveConfig(config: Partial<RelayConfig>, cwd: string = process.cwd()): void {
@@ -115,4 +124,30 @@ function deepMerge(base: any, override: any): any {
     }
   }
   return result;
+}
+
+function normalizeConfig(config: RelayConfig, raw: unknown): RelayConfig {
+  const rawObject = typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+    ? raw as Record<string, unknown>
+    : {};
+  const rawLimits = typeof rawObject.limits === 'object' && rawObject.limits !== null && !Array.isArray(rawObject.limits)
+    ? rawObject.limits as Record<string, unknown>
+    : {};
+  const rawThresholds = typeof rawObject.thresholds === 'object' && rawObject.thresholds !== null && !Array.isArray(rawObject.thresholds)
+    ? rawObject.thresholds as Record<string, unknown>
+    : {};
+
+  if (typeof rawLimits.handoff_percent !== 'number' && typeof rawThresholds.rate_limit_percent === 'number') {
+    config.limits.handoff_percent = rawThresholds.rate_limit_percent;
+  }
+
+  if (!['ask', 'auto_handoff', 'warn_only'].includes(config.limits.mode)) {
+    config.limits.mode = DEFAULT_CONFIG.limits.mode;
+  }
+
+  if (!Number.isFinite(config.limits.handoff_percent)) {
+    config.limits.handoff_percent = DEFAULT_CONFIG.limits.handoff_percent;
+  }
+
+  return config;
 }

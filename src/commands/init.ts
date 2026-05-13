@@ -147,6 +147,7 @@ export async function runInit(cwd: string): Promise<void> {
   console.log(chalk.bold('\nSetup complete!\n'));
   console.log('Useful commands:');
   console.log(`  ${chalk.cyan('relay usage --from claude')}  — inspect Claude usage cache/API status`);
+  console.log(`  ${chalk.cyan('relay codex')}                — preflight Codex usage before launching`);
   console.log(`  ${chalk.cyan('relay watch --from codex')}   — monitor Codex rollout usage limits`);
   console.log(`  ${chalk.cyan('relay pickup')}               — transfer to another agent when a handoff is ready`);
   console.log('');

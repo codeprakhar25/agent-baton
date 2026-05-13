@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type { NormalizedUsageStatus, RelayConfig } from '../types.js';
-import { getUsageCachePath } from '../config.js';
+import { getUsageCachePath, getUsageLimitPercent } from '../config.js';
 import { findActiveCodexTranscript } from './transcript/codex.js';
 import { tailFile } from './transcript/common.js';
 
@@ -49,7 +49,7 @@ export async function lookupClaudeUsage(
   options: ClaudeUsageLookupOptions,
 ): Promise<ClaudeUsageLookupResult> {
   const cached = readUsageCache(options.cwd, 'claude');
-  const threshold = options.config.thresholds.rate_limit_percent;
+  const threshold = getUsageLimitPercent(options.config);
 
   if (options.cacheOnly) {
     if (!cached) {

@@ -44,6 +44,11 @@ export async function runGuard(
     return;
   }
 
+  if (isSessionStart(phase)) {
+    emitHookJson({ suppressOutput: true });
+    return;
+  }
+
   if (!initial.status.triggered) {
     emitHookJson({ suppressOutput: true });
     return;
@@ -59,6 +64,18 @@ export async function runGuard(
     return;
   }
 
+  const warning = buildChoicePromptMessage(usage, confirmed.error);
+
+  if (cfg.limits.mode === 'warn_only') {
+    emitWarningForHook(phase, warning);
+    return;
+  }
+
+  if (cfg.limits.mode === 'ask') {
+    emitAskForHook(phase, warning);
+    return;
+  }
+
   const transcriptPath = hookInput.transcript_path ?? findActiveClaudeTranscript(resolvedCwd);
   const handoffPath = writeUsageLimitHandoff('claude', resolvedCwd, transcriptPath, usage);
   const message = [
@@ -69,6 +86,16 @@ export async function runGuard(
   ].filter(Boolean).join(' ');
 
   emitBlockForHook(phase, message);
+}
+
+function buildChoicePromptMessage(usage: NormalizedUsageStatus, refreshError?: string): string {
+  return [
+    `${usage.triggerReason ?? 'Claude usage limit threshold crossed'}.`,
+    refreshError ? `Fresh usage check failed, using cached usage: ${refreshError}.` : '',
+    'Before doing more work, ask the user to choose: continue in Claude with the remaining quota, or write a handoff and stop.',
+    'If the user chooses handoff, run `relay handoff --from claude --reason rate-limit` or write a detailed handoff directly, then tell the user to run `relay pickup`.',
+    'Do not write `.relay/pending-transfer.json` unless a handoff is requested or created.',
+  ].filter(Boolean).join(' ');
 }
 
 function writeUsageLimitHandoff(
@@ -119,8 +146,53 @@ function readHookInput(): ClaudeHookInput {
   }
 }
 
+function emitAskForHook(eventName: string | undefined, message: string): void {
+  if (isPreToolUse(eventName)) {
+    emitHookJson({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: `Relay usage warning: ${message} Ask the user for this choice before using tools.`,
+      },
+    });
+    return;
+  }
+
+  if (isUserPromptSubmit(eventName)) {
+    emitHookJson({
+      hookSpecificOutput: {
+        hookEventName: 'UserPromptSubmit',
+        additionalContext: `Relay usage warning: ${message}`,
+      },
+    });
+    return;
+  }
+
+  emitHookJson({
+    decision: 'block',
+    reason: `Relay usage warning: ${message}`,
+  });
+}
+
+function emitWarningForHook(eventName: string | undefined, message: string): void {
+  if (isUserPromptSubmit(eventName)) {
+    emitHookJson({
+      hookSpecificOutput: {
+        hookEventName: 'UserPromptSubmit',
+        additionalContext: `Relay usage warning: ${message}`,
+      },
+    });
+    return;
+  }
+
+  emitHookJson({
+    suppressOutput: true,
+    systemMessage: `Relay usage warning: ${message}`,
+  });
+}
+
 function emitBlockForHook(eventName: string | undefined, reason: string): void {
-  if (eventName === 'PreToolUse') {
+  if (isPreToolUse(eventName)) {
     emitHookJson({
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
@@ -131,7 +203,7 @@ function emitBlockForHook(eventName: string | undefined, reason: string): void {
     return;
   }
 
-  if (eventName === 'SessionStart') {
+  if (isSessionStart(eventName)) {
     emitHookJson({
       continue: false,
       stopReason: reason,
@@ -143,6 +215,18 @@ function emitBlockForHook(eventName: string | undefined, reason: string): void {
     decision: 'block',
     reason,
   });
+}
+
+function isSessionStart(eventName: string | undefined): boolean {
+  return eventName === 'SessionStart' || eventName === 'session-start';
+}
+
+function isUserPromptSubmit(eventName: string | undefined): boolean {
+  return eventName === 'UserPromptSubmit' || eventName === 'prompt-submit';
+}
+
+function isPreToolUse(eventName: string | undefined): boolean {
+  return eventName === 'PreToolUse' || eventName === 'pre-tool';
 }
 
 function emitHookJson(value: unknown): void {

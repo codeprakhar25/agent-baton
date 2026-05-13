@@ -5,13 +5,14 @@
  *   relay init                    — set up relay in current project
  *   relay usage --from <agent>    — print current usage-limit status
  *   relay guard --from <agent>    — hook command for usage-limit blocking
- *   relay watch --from <agent>    — monitor usage limits and write handoffs
+ *   relay watch --from <agent>    — monitor usage limits and warn or hand off
  *   relay handoff --from <agent>  — manually capture task state + handoff file
  *   relay pickup [--to <agent>]   — choose next agent and launch it with handoff
+ *   relay codex [-- <args>]       — preflight usage and launch Codex
  */
 
 import { Command } from 'commander';
-import type { AgentName } from './types.js';
+import type { AgentName, HandoffDocument } from './types.js';
 
 const VALID_AGENTS: AgentName[] = ['cursor', 'claude', 'codex', 'gemini'];
 
@@ -21,6 +22,13 @@ function assertAgent(value: string): AgentName {
     process.exit(1);
   }
   return value as AgentName;
+}
+
+function assertHandoffReason(value: string): HandoffDocument['reason'] {
+  if (value === 'manual') return 'manual';
+  if (value === 'rate-limit' || value === 'rate_limit') return 'rate_limit';
+  console.error(`Invalid handoff reason: "${value}". Must be one of: manual, rate-limit`);
+  process.exit(1);
 }
 
 const program = new Command();
@@ -40,7 +48,7 @@ program
 
 program
   .command('watch')
-  .description('Background daemon: monitor usage limits and trigger handoffs')
+  .description('Background daemon: monitor usage limits and warn or hand off')
   .requiredOption('--from <agent>', 'Which agent to watch')
   .option('--cwd <path>', 'Working directory to monitor', process.cwd())
   .action(async (opts: { from: string; cwd: string }) => {
@@ -80,11 +88,24 @@ program
   .command('handoff')
   .description('Manually capture task state and write a handoff file')
   .requiredOption('--from <agent>', 'Which agent you are handing off from')
+  .option('--reason <reason>', 'Why the handoff is being created: manual or rate-limit', 'manual')
   .option('--launch', 'Immediately prompt to launch the next agent', false)
-  .action(async (opts: { from: string; launch: boolean }) => {
+  .action(async (opts: { from: string; reason: string; launch: boolean }) => {
     const agent = assertAgent(opts.from);
+    const reason = assertHandoffReason(opts.reason);
     const { runHandoff } = await import('./commands/handoff.js');
-    await runHandoff(agent, process.cwd(), opts.launch);
+    await runHandoff(agent, process.cwd(), opts.launch, reason);
+  });
+
+program
+  .command('codex')
+  .description('Preflight Codex usage, then launch Codex or create/pick up a handoff')
+  .allowUnknownOption(true)
+  .allowExcessArguments(true)
+  .argument('[args...]', 'Arguments or prompt to pass to Codex')
+  .action(async (args: string[] = []) => {
+    const { runCodex } = await import('./commands/codex.js');
+    await runCodex(process.cwd(), args);
   });
 
 program
