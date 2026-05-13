@@ -10,8 +10,6 @@ dist/
 wiki/
 .relay/watch-state.json
 .relay/status.json
+.relay/usage-cache.json
 .relay/pending-transfer.json
 .relay/config.json
-
-.relay/context-state.json
-.relay/danger-zone

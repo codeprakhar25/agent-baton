@@ -1,7 +1,7 @@
 /**
  * relay handoff --from <agent>
  *
- * Manual handoff: extract context from the current agent session,
+ * Manual handoff: extract task state from the current agent session,
  * write the handoff document, then optionally launch the next agent.
  * Used when the user wants to transfer work deliberately (not limit-triggered).
  */
@@ -21,14 +21,14 @@ export async function runHandoff(fromAgent: AgentName, cwd: string, autoLaunch =
   const cfg = loadConfig(cwd);
 
   console.log(chalk.bold(`\nrelay handoff — from: ${chalk.cyan(fromAgent)}\n`));
-  console.log(chalk.gray('Capturing context...'));
+  console.log(chalk.gray('Capturing task state...'));
 
   // 1. Git state
-  const git = captureGitState(cwd, cfg.context_extraction.max_diff_chars);
+  const git = captureGitState(cwd, cfg.handoff_extraction.max_diff_chars);
   console.log(chalk.green('✓') + ` Git: branch=${git.branch}, ${git.modifiedFiles.length} modified file(s)`);
 
   // 2. Session transcript
-  const session = extractSession(fromAgent, null, cwd, cfg.context_extraction.max_transcript_lines);
+  const session = extractSession(fromAgent, null, cwd, cfg.handoff_extraction.max_transcript_lines);
   console.log(chalk.green('✓') + ` Session: ${session.recentToolCalls.length} recent tool calls extracted`);
 
   // 3. Build and write handoff

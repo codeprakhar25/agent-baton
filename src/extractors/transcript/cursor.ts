@@ -53,7 +53,7 @@ export function extractCursorSession(
 
   const entries = parseJsonlTail(resolved, maxLines);
   const firstEntry = entries[0];
-  const sessionId = (firstEntry as Record<string, unknown>)?.session_id as string | undefined;
+  const sessionId = (firstEntry as unknown as Record<string, unknown>)?.session_id as string | undefined;
 
   return buildSessionFromEntries(entries, 'cursor', sessionId, resolved);
 }

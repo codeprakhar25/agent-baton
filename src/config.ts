@@ -10,14 +10,20 @@ const DEFAULT_CONFIG: RelayConfig = {
     gemini: { enabled: true, priority: 4 },
   },
   thresholds: {
-    warn_percent: 85,
-    prepare_percent: 90,
-    handoff_percent: 95,
-    rate_limit_percent: 90,
+    rate_limit_percent: 95,
   },
-  dev: {},
+  usage_cache: {
+    safe_ttl_ms: 15 * 60 * 1000,
+    near_limit_ttl_ms: 60 * 1000,
+    near_limit_percent: 75,
+  },
+  usage_sources: {
+    claude: {
+      oauth_credentials_path: '~/.claude/.credentials.json',
+    },
+  },
   handoff_dir: '.relay/handoffs',
-  context_extraction: {
+  handoff_extraction: {
     max_transcript_lines: 100,
     include_git_diff: true,
     max_diff_chars: 8000,
@@ -25,7 +31,6 @@ const DEFAULT_CONFIG: RelayConfig = {
   },
   watch: {
     poll_interval_ms: 3000,
-    stale_threshold_ms: 15000,
   },
 };
 
@@ -50,6 +55,10 @@ export function getWatchStatePath(cwd: string = process.cwd()): string {
 
 export function getStatusPath(cwd: string = process.cwd()): string {
   return path.join(getRelayDir(cwd), 'status.json');
+}
+
+export function getUsageCachePath(cwd: string = process.cwd()): string {
+  return path.join(getRelayDir(cwd), 'usage-cache.json');
 }
 
 export function loadConfig(cwd: string = process.cwd()): RelayConfig {
@@ -92,36 +101,6 @@ export function getLatestHandoffPath(cwd: string = process.cwd()): string | null
     .sort((a, b) => b.mtime - a.mtime);
   if (!files.length) return null;
   return path.join(dir, files[0].name);
-}
-
-export function getContextStatePath(cwd: string = process.cwd()): string {
-  return path.join(getRelayDir(cwd), 'context-state.json');
-}
-
-export function getDangerZonePath(cwd: string = process.cwd()): string {
-  return path.join(getRelayDir(cwd), 'danger-zone');
-}
-
-export function readContextState(cwd: string = process.cwd()): import('./types.js').ContextState | null {
-  const p = getContextStatePath(cwd);
-  try {
-    if (!fs.existsSync(p)) return null;
-    return JSON.parse(fs.readFileSync(p, 'utf8'));
-  } catch { return null; }
-}
-
-export function writeContextState(cwd: string, state: import('./types.js').ContextState): void {
-  try {
-    fs.writeFileSync(getContextStatePath(cwd), JSON.stringify(state, null, 2), 'utf8');
-  } catch { /* best effort */ }
-}
-
-export function setDangerZone(cwd: string, active: boolean): void {
-  const p = getDangerZonePath(cwd);
-  try {
-    if (active) fs.writeFileSync(p, '', 'utf8');
-    else if (fs.existsSync(p)) fs.unlinkSync(p);
-  } catch { /* best effort */ }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

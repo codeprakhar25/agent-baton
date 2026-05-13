@@ -6,10 +6,8 @@ import { redactSecrets } from '../extractors/transcript/common.js';
 import { getHandoffDir, ensureRelayDirs } from '../config.js';
 
 const REASON_LABEL: Record<HandoffDocument['reason'], string> = {
-  context_window: 'Context window limit reached',
-  rate_limit:     'Subscription/rate limit reached',
-  emergency:      'Emergency: agent stopped unexpectedly',
-  manual:         'Manual transfer',
+  rate_limit: 'Usage limit reached',
+  manual:     'Manual transfer',
 };
 
 /** Write a handoff document and return its file path */
@@ -30,7 +28,6 @@ export function writeHandoff(doc: HandoffDocument, cwd: string): string {
 }
 
 function renderHandoff(doc: HandoffDocument): string {
-  const isEmergency = doc.reason === 'emergency';
   const progressSection = doc.progressItems.length
     ? doc.progressItems.map(p => `- ${p}`).join('\n')
     : '- (no structured progress items found — review last assistant message above)';
@@ -58,12 +55,7 @@ function renderHandoff(doc: HandoffDocument): string {
     ? `\`\`\`diff\n${doc.git.diff}\n\`\`\``
     : '(no uncommitted diff)';
 
-  const warningBanner = isEmergency
-    ? `> ⚠️ **EMERGENCY HANDOFF** — the previous agent stopped unexpectedly mid-task.\n> The progress below is reconstructed from the transcript tail + git state.\n> Run \`git diff HEAD\` for the complete picture of what changed.\n\n`
-    : '';
-
   return `# Relay Handoff: ${doc.taskDescription ?? 'Untitled Task'}
-${warningBanner}
 ## Metadata
 
 | Field | Value |
@@ -71,7 +63,7 @@ ${warningBanner}
 | Handoff ID | \`${doc.id}\` |
 | Timestamp | ${doc.timestamp} |
 | From Agent | **${doc.fromAgent}** |
-| Reason | ${REASON_LABEL[doc.reason]}${doc.contextPercent ? ` (${doc.contextPercent}% used)` : ''} |
+| Reason | ${REASON_LABEL[doc.reason]} |
 | Git Branch | \`${doc.git.branch}\` |
 | Uncommitted Changes | ${doc.git.hasUncommittedChanges ? 'Yes' : 'No'} |
 
@@ -165,7 +157,6 @@ export function buildHandoffDoc(
     timestamp: partial.timestamp ?? new Date().toISOString(),
     fromAgent: partial.fromAgent,
     reason: partial.reason,
-    contextPercent: partial.contextPercent,
     git: partial.git,
     session: partial.session,
     taskDescription: partial.taskDescription ?? partial.session.lastUserMessage ?? 'Unknown task',

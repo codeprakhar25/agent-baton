@@ -1,7 +1,5 @@
 export type AgentName = 'cursor' | 'claude' | 'codex' | 'gemini';
 
-export type ThresholdStage = 'warn' | 'prepare' | 'handoff' | 'none';
-
 export interface RelayConfig {
   agents: {
     cursor: AgentConfig;
@@ -10,22 +8,26 @@ export interface RelayConfig {
     gemini: AgentConfig;
   };
   thresholds: {
-    /** Soft warning — keep working but stay on current subtask */
-    warn_percent: number;
-    /** Wrap-up directive — finish current step and stop */
-    prepare_percent: number;
-    /** Handoff trigger — write handoff document now */
-    handoff_percent: number;
     /** Trigger handoff when subscription rate limit exceeds this % */
     rate_limit_percent: number;
   };
-  dev: {
-    /** If set, overrides all three threshold checks with this single value (for testing) */
-    force_threshold?: number;
+  usage_cache: {
+    /** Cache TTL for manual/status lookups while usage is below the limit */
+    safe_ttl_ms: number;
+    /** Cache TTL once usage approaches the handoff threshold */
+    near_limit_ttl_ms: number;
+    /** Start refreshing more aggressively at this percentage */
+    near_limit_percent: number;
+  };
+  usage_sources: {
+    claude: {
+      /** Claude Code OAuth credentials path */
+      oauth_credentials_path: string;
+    };
   };
   handoff_dir: string;
-  context_extraction: {
-    /** Max lines of transcript to extract for emergency handoffs */
+  handoff_extraction: {
+    /** Max lines of transcript to extract for usage-limit handoffs */
     max_transcript_lines: number;
     /** Include full git diff in handoff (can be large) */
     include_git_diff: boolean;
@@ -35,10 +37,8 @@ export interface RelayConfig {
     scan_secrets: boolean;
   };
   watch: {
-    /** How often watch daemon polls for dead sessions (ms) */
+    /** How often watch daemon polls usage sources (ms) */
     poll_interval_ms: number;
-    /** How long a transcript must be stale before we consider the session dead (ms) */
-    stale_threshold_ms: number;
   };
 }
 
@@ -48,33 +48,6 @@ export interface AgentConfig {
   priority: number;
   /** Path to CLI binary, defaults to agent name */
   bin?: string;
-}
-
-/** Payload that all three agent hooks send on stdin (unified shape) */
-export interface HookPayload {
-  /** From Cursor/Claude statusline spec */
-  context_window?: {
-    used_percentage: number | null;
-    remaining_percentage: number | null;
-    context_window_size: number | null;
-    total_input_tokens: number | null;
-  };
-  /** Session metadata */
-  session_id?: string;
-  session_name?: string;
-  transcript_path?: string;
-  cwd?: string;
-  model?: {
-    id: string;
-    display_name: string;
-  };
-}
-
-/** What relay check returns to the hook (followup_message format) */
-export interface HookResponse {
-  followup_message?: string;
-  decision?: 'block';
-  reason?: string;
 }
 
 export interface GitState {
@@ -117,7 +90,7 @@ export interface ExtractedSession {
   taskDescription?: string;
   progressItems: string[];
   errors: string[];
-  /** Raw tail of transcript for emergency recovery */
+  /** Raw tail of transcript for handoff recovery */
   transcriptTail: string;
 }
 
@@ -132,8 +105,7 @@ export interface HandoffDocument {
   id: string;
   timestamp: string;
   fromAgent: AgentName;
-  reason: 'context_window' | 'rate_limit' | 'emergency' | 'manual';
-  contextPercent?: number;
+  reason: 'rate_limit' | 'manual';
   git: GitState;
   session: ExtractedSession;
   taskDescription: string;
@@ -154,26 +126,19 @@ export interface RateLimitStatus {
   resetIn?: string;
 }
 
-/** Context usage state written by statusline, read by check/pretool */
-export interface ContextState {
+export interface NormalizedUsageStatus {
   agent: AgentName;
-  pct: number;
-  sessionId?: string;
-  updatedAt: string;
-}
-
-/** Payload shape from StatusLine mechanism (superset of hook payload — includes context_window) */
-export interface StatusLinePayload {
-  session_id?: string;
-  transcript_path?: string;
-  cwd?: string;
-  context_window?: {
-    used_percentage: number | null;
-    remaining_percentage: number | null;
-    context_window_size: number | null;
-    total_input_tokens: number | null;
-  };
-  model?: { id: string; display_name: string };
+  source: string;
+  fetchedAt: string;
+  cacheStatus: 'fresh' | 'stale' | 'miss';
+  fiveHourPercent?: number;
+  weeklyPercent?: number;
+  extraUsagePercent?: number;
+    fiveHourResetsAt?: string;
+  weeklyResetsAt?: string;
+  triggered: boolean;
+  triggerReason?: string;
+  stale?: boolean;
 }
 
 export interface WatchState {

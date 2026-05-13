@@ -60,7 +60,7 @@ export function extractCodexSession(
   const entries = parseJsonlTail(resolved, maxLines);
   // Codex rollout files often start with a summary header line
   const firstEntry = entries[0];
-  const sessionId = (firstEntry as Record<string, unknown>)?.id as string | undefined;
+  const sessionId = (firstEntry as unknown as Record<string, unknown>)?.id as string | undefined;
 
   return buildSessionFromEntries(entries, 'codex', sessionId, resolved);
 }

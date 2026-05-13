@@ -65,7 +65,7 @@ export function extractClaudeSession(
 
   // Extract session ID from the first entry
   const firstEntry = entries[0];
-  const sessionId = (firstEntry as Record<string, unknown>)?.sessionId as string | undefined;
+  const sessionId = (firstEntry as unknown as Record<string, unknown>)?.sessionId as string | undefined;
 
   return buildSessionFromEntries(entries, 'claude', sessionId, resolved);
 }
