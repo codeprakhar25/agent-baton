@@ -57,110 +57,134 @@ function relayBinPath(): string {
   return 'relay';
 }
 
+function mergeHook(
+  hooks: Record<string, unknown[]>,
+  eventKey: string,
+  newHook: Record<string, unknown>,
+  matchStr: string,
+): boolean {
+  const existing: unknown[] = (hooks[eventKey] as unknown[]) ?? [];
+  const alreadyIn = existing.some(
+    h => typeof h === 'object' && h !== null &&
+         (h as Record<string, unknown>).command?.toString().includes(matchStr)
+  );
+  if (alreadyIn) return false;
+  hooks[eventKey] = [...existing, newHook];
+  return true;
+}
+
 function installCursorHook(cwd: string): HookInstallResult {
   const hooksDir = path.join(cwd, '.cursor');
   const hooksFile = path.join(hooksDir, 'hooks.json');
-
   fs.mkdirSync(hooksDir, { recursive: true });
 
   let existing: Record<string, unknown> = { version: 1, hooks: {} };
   if (fs.existsSync(hooksFile)) {
-    try {
-      existing = JSON.parse(fs.readFileSync(hooksFile, 'utf8'));
-    } catch { /* use default */ }
+    try { existing = JSON.parse(fs.readFileSync(hooksFile, 'utf8')); } catch { /* use default */ }
   }
 
   const hooks = (existing.hooks as Record<string, unknown[]>) ?? {};
-  const relayHook = {
-    command: `${relayBinPath()} check --from cursor --event stop`,
-    timeout: 8,
-  };
+  const bin = relayBinPath();
+  let changed = false;
 
-  const stopHooks: unknown[] = (hooks.stop as unknown[]) ?? [];
-  const alreadyInstalled = stopHooks.some(
-    h => typeof h === 'object' && h !== null && (h as Record<string, unknown>).command?.toString().includes('relay check')
-  );
+  // stop hook (check — reads from context-state written by statusline)
+  changed = mergeHook(hooks, 'stop', { command: `${bin} check --from cursor --event stop`, timeout: 8 }, 'relay check') || changed;
+  // preToolUse hook (mid-response gate — fast file-stat check)
+  changed = mergeHook(hooks, 'preToolUse', { command: `${bin} pretool --from cursor`, timeout: 5 }, 'relay pretool') || changed;
+  // preCompact hook (last-resort handoff before auto-compaction)
+  changed = mergeHook(hooks, 'preCompact', { command: `${bin} precompact --from cursor`, timeout: 15 }, 'relay precompact') || changed;
 
-  if (alreadyInstalled) {
-    return { agent: 'cursor', status: 'skipped', note: 'hook already present' };
-  }
+  if (!changed) return { agent: 'cursor', status: 'skipped', note: 'hooks already present' };
 
-  hooks.stop = [...stopHooks, relayHook];
   existing.hooks = hooks;
-
   fs.writeFileSync(hooksFile, JSON.stringify(existing, null, 2), 'utf8');
-  return { agent: 'cursor', status: stopHooks.length ? 'updated' : 'installed' };
+
+  // Install statusline config (separate from hooks)
+  installCursorStatusLine(cwd, bin);
+
+  return { agent: 'cursor', status: 'installed' };
+}
+
+function installCursorStatusLine(cwd: string, bin: string): void {
+  const settingsFile = path.join(cwd, '.cursor', 'settings.json');
+  let settings: Record<string, unknown> = {};
+  if (fs.existsSync(settingsFile)) {
+    try { settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8')); } catch { /* use default */ }
+  }
+  if (!settings.statusLine) {
+    settings.statusLine = `${bin} statusline --from cursor`;
+    fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2), 'utf8');
+  }
 }
 
 function installClaudeHook(cwd: string): HookInstallResult {
   const hooksDir = path.join(cwd, '.claude');
   const hooksFile = path.join(hooksDir, 'hooks.json');
-
   fs.mkdirSync(hooksDir, { recursive: true });
 
   let existing: Record<string, unknown> = { hooks: {} };
   if (fs.existsSync(hooksFile)) {
-    try {
-      existing = JSON.parse(fs.readFileSync(hooksFile, 'utf8'));
-    } catch { /* use default */ }
+    try { existing = JSON.parse(fs.readFileSync(hooksFile, 'utf8')); } catch { /* use default */ }
   }
 
   const hooks = (existing.hooks as Record<string, unknown[]>) ?? {};
-  const relayHook = {
-    type: 'command',
-    command: `${relayBinPath()} check --from claude --event stop`,
-    timeout: 8,
-  };
+  const bin = relayBinPath();
+  const cmd = (command: string, timeout: number) => ({ type: 'command', command, timeout });
+  let changed = false;
 
-  const stopHooks: unknown[] = (hooks.Stop as unknown[]) ?? [];
-  const alreadyInstalled = stopHooks.some(
-    h => typeof h === 'object' && h !== null && (h as Record<string, unknown>).command?.toString().includes('relay check')
-  );
+  changed = mergeHook(hooks, 'Stop', cmd(`${bin} check --from claude --event stop`, 8), 'relay check') || changed;
+  changed = mergeHook(hooks, 'PreToolUse', cmd(`${bin} pretool --from claude`, 5), 'relay pretool') || changed;
+  changed = mergeHook(hooks, 'PreCompact', cmd(`${bin} precompact --from claude`, 15), 'relay precompact') || changed;
 
-  if (alreadyInstalled) {
-    return { agent: 'claude', status: 'skipped', note: 'hook already present' };
-  }
+  if (!changed) return { agent: 'claude', status: 'skipped', note: 'hooks already present' };
 
-  hooks.Stop = [...stopHooks, relayHook];
   existing.hooks = hooks;
-
   fs.writeFileSync(hooksFile, JSON.stringify(existing, null, 2), 'utf8');
-  return { agent: 'claude', status: stopHooks.length ? 'updated' : 'installed' };
+
+  // Install statusline in project settings
+  installClaudeStatusLine(cwd, bin);
+
+  return { agent: 'claude', status: 'installed' };
+}
+
+function installClaudeStatusLine(cwd: string, bin: string): void {
+  // Project-level Claude Code settings
+  const settingsFile = path.join(cwd, '.claude', 'settings.json');
+  let settings: Record<string, unknown> = {};
+  if (fs.existsSync(settingsFile)) {
+    try { settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8')); } catch { /* use default */ }
+  }
+  if (!settings.statusLine) {
+    settings.statusLine = `${bin} statusline --from claude`;
+    fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2), 'utf8');
+  }
 }
 
 function installCodexHook(cwd: string): HookInstallResult {
   const hooksDir = path.join(cwd, '.codex');
   const hooksFile = path.join(hooksDir, 'hooks.json');
-
   fs.mkdirSync(hooksDir, { recursive: true });
 
   let existing: Record<string, unknown> = { version: 1, hooks: {} };
   if (fs.existsSync(hooksFile)) {
-    try {
-      existing = JSON.parse(fs.readFileSync(hooksFile, 'utf8'));
-    } catch { /* use default */ }
+    try { existing = JSON.parse(fs.readFileSync(hooksFile, 'utf8')); } catch { /* use default */ }
   }
 
   const hooks = (existing.hooks as Record<string, unknown[]>) ?? {};
-  const relayHook = {
-    command: `${relayBinPath()} check --from codex --event stop`,
-    timeout: 8,
-  };
+  const bin = relayBinPath();
+  let changed = false;
 
-  const stopHooks: unknown[] = (hooks.Stop as unknown[]) ?? [];
-  const alreadyInstalled = stopHooks.some(
-    h => typeof h === 'object' && h !== null && (h as Record<string, unknown>).command?.toString().includes('relay check')
-  );
+  // Codex 0.130.0+ supports PreToolUse, PreCompact (confirmed stable)
+  // StatusLine: tui.status_line config exists but items undocumented — skip for now
+  changed = mergeHook(hooks, 'Stop', { command: `${bin} check --from codex --event stop`, timeout: 8 }, 'relay check') || changed;
+  changed = mergeHook(hooks, 'PreToolUse', { command: `${bin} pretool --from codex`, timeout: 5 }, 'relay pretool') || changed;
+  changed = mergeHook(hooks, 'PreCompact', { command: `${bin} precompact --from codex`, timeout: 15 }, 'relay precompact') || changed;
 
-  if (alreadyInstalled) {
-    return { agent: 'codex', status: 'skipped', note: 'hook already present' };
-  }
+  if (!changed) return { agent: 'codex', status: 'skipped', note: 'hooks already present' };
 
-  hooks.Stop = [...stopHooks, relayHook];
   existing.hooks = hooks;
-
   fs.writeFileSync(hooksFile, JSON.stringify(existing, null, 2), 'utf8');
-  return { agent: 'codex', status: stopHooks.length ? 'updated' : 'installed' };
+  return { agent: 'codex', status: 'installed', note: 'statusline skipped (tui.status_line undocumented — probe first)' };
 }
 
 function updateGitignore(cwd: string): void {
@@ -171,6 +195,8 @@ function updateGitignore(cwd: string): void {
     '.relay/status.json',
     '.relay/pending-transfer.json',
     '.relay/config.json',
+    '.relay/context-state.json',
+    '.relay/danger-zone',
   ];
 
   let content = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, 'utf8') : '';

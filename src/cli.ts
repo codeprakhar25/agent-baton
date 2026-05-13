@@ -33,7 +33,7 @@ program
   .command('init')
   .description('Set up relay in the current project (creates .relay/, installs hooks)')
   .option('--force', 'Overwrite existing hooks', false)
-  .action(async (opts) => {
+  .action(async (opts: { force: boolean }) => {
     const { runInit } = await import('./commands/init.js');
     await runInit(process.cwd(), opts.force);
   });
@@ -43,7 +43,7 @@ program
   .description('Check if the current session is approaching limits (called by agent hooks)')
   .requiredOption('--from <agent>', 'Which agent is calling this hook')
   .option('--event <event>', 'Hook event name', 'stop')
-  .action(async (opts) => {
+  .action(async (opts: { from: string; event: string }) => {
     const agent = assertAgent(opts.from);
     const { runCheck } = await import('./commands/check.js');
     await runCheck(agent, opts.event, process.cwd());
@@ -54,7 +54,7 @@ program
   .description('Background daemon: detect dead sessions and trigger emergency handoffs')
   .requiredOption('--from <agent>', 'Which agent to watch')
   .option('--cwd <path>', 'Working directory to monitor', process.cwd())
-  .action(async (opts) => {
+  .action(async (opts: { from: string; cwd: string }) => {
     const agent = assertAgent(opts.from);
     const { runWatch } = await import('./commands/watch.js');
     await runWatch(agent, opts.cwd);
@@ -65,7 +65,7 @@ program
   .description('Manually capture context and write a handoff file')
   .requiredOption('--from <agent>', 'Which agent you are handing off from')
   .option('--launch', 'Immediately prompt to launch the next agent', false)
-  .action(async (opts) => {
+  .action(async (opts: { from: string; launch: boolean }) => {
     const agent = assertAgent(opts.from);
     const { runHandoff } = await import('./commands/handoff.js');
     await runHandoff(agent, process.cwd(), opts.launch);
@@ -75,17 +75,47 @@ program
   .command('pickup')
   .description('Pick up a pending task: choose next agent and launch it with the handoff context')
   .option('--to <agent>', 'Skip the picker and launch a specific agent')
-  .action(async (opts) => {
+  .action(async (opts: { to: string }) => {
     const toAgent = opts.to ? assertAgent(opts.to) : undefined;
     const { runPickup } = await import('./commands/handoff.js');
     await runPickup(process.cwd(), toAgent);
   });
 
 program
+  .command('statusline')
+  .description('StatusLine handler — receives context_window data per turn, writes state for check/pretool')
+  .requiredOption('--from <agent>', 'Which agent is calling this')
+  .action(async (opts: { from: string }) => {
+    const agent = assertAgent(opts.from);
+    const { runStatusLine } = await import('./commands/statusline.js');
+    await runStatusLine(agent, process.cwd());
+  });
+
+program
+  .command('pretool')
+  .description('PreToolUse hook — mid-response gate that blocks tool calls when context >= handoff threshold')
+  .requiredOption('--from <agent>', 'Which agent is calling this')
+  .action(async (opts: { from: string }) => {
+    const agent = assertAgent(opts.from);
+    const { runPreTool } = await import('./commands/pretool.js');
+    await runPreTool(agent, process.cwd());
+  });
+
+program
+  .command('precompact')
+  .description('PreCompact hook — writes emergency handoff before auto-compaction, allows compaction to proceed')
+  .requiredOption('--from <agent>', 'Which agent is calling this')
+  .action(async (opts: { from: string }) => {
+    const agent = assertAgent(opts.from);
+    const { runPreCompact } = await import('./commands/precompact.js');
+    await runPreCompact(agent, process.cwd());
+  });
+
+program
   .command('threshold [value]')
   .description('[DEV] Override all context thresholds for testing. relay threshold 10 → triggers at 10%. relay threshold --reset → restore real values.')
   .option('--reset', 'Clear the override and use real thresholds')
-  .action(async (value, opts) => {
+  .action(async (value, opts: { reset: boolean }) => {
     const { runThreshold } = await import('./commands/threshold.js');
     runThreshold(value, opts.reset ?? false, process.cwd());
   });

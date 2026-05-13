@@ -93,6 +93,36 @@ export function getLatestHandoffPath(cwd: string = process.cwd()): string | null
   return path.join(dir, files[0].name);
 }
 
+export function getContextStatePath(cwd: string = process.cwd()): string {
+  return path.join(getRelayDir(cwd), 'context-state.json');
+}
+
+export function getDangerZonePath(cwd: string = process.cwd()): string {
+  return path.join(getRelayDir(cwd), 'danger-zone');
+}
+
+export function readContextState(cwd: string = process.cwd()): import('./types.js').ContextState | null {
+  const p = getContextStatePath(cwd);
+  try {
+    if (!fs.existsSync(p)) return null;
+    return JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch { return null; }
+}
+
+export function writeContextState(cwd: string, state: import('./types.js').ContextState): void {
+  try {
+    fs.writeFileSync(getContextStatePath(cwd), JSON.stringify(state, null, 2), 'utf8');
+  } catch { /* best effort */ }
+}
+
+export function setDangerZone(cwd: string, active: boolean): void {
+  const p = getDangerZonePath(cwd);
+  try {
+    if (active) fs.writeFileSync(p, '', 'utf8');
+    else if (fs.existsSync(p)) fs.unlinkSync(p);
+  } catch { /* best effort */ }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function deepMerge(base: any, override: any): any {
   if (typeof override !== 'object' || override === null) return override ?? base;

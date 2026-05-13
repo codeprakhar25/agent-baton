@@ -1,10 +1,13 @@
 /**
  * relay check --from <agent> --event <event>
  *
- * Called by hooks in all three agents on every stop/turn-end event.
- * Reads JSON from stdin (hook payload), checks thresholds, and responds
- * with one of three graduated stages:
+ * Called by the Stop hook in all three agents after every turn.
  *
+ * IMPORTANT: Stop hook payloads never include context_window data.
+ * Context % is read from .relay/context-state.json written by `relay statusline`.
+ * If that file doesn't exist yet (statusline not configured), this is a no-op.
+ *
+ * Graduated stages based on context %:
  * - warn (85-89%):    soft followup — keep working, stay on current subtask
  * - prepare (90-94%): wrap-up followup — finish current step, stop
  * - handoff (≥95%):   no fresh handoff → ask agent to write one
@@ -13,28 +16,24 @@
 
 import fs from 'fs';
 import path from 'path';
-import type { HookPayload, HookResponse, AgentName, RelayConfig, ThresholdStage } from '../types.js';
-import { loadConfig, getHandoffDir, getLatestHandoffPath } from '../config.js';
+import type { HookResponse, AgentName, RelayConfig, ThresholdStage } from '../types.js';
+import { loadConfig, getHandoffDir, getLatestHandoffPath, readContextState } from '../config.js';
 import { captureGitState } from '../extractors/git.js';
 
 /** Maximum age of an existing handoff to consider it "fresh" (3 minutes) */
 const HANDOFF_FRESH_MS = 3 * 60 * 1000;
 
 export async function runCheck(agent: AgentName, event: string, cwd: string): Promise<void> {
-  const rawInput = await readStdin();
-  let payload: HookPayload = {};
-
-  try {
-    payload = JSON.parse(rawInput);
-  } catch {
-    respond({});
-    return;
-  }
+  // Drain stdin — Stop hook sends data but context_window is never in it.
+  // Context % comes from context-state.json written by `relay statusline`.
+  readStdin().catch(() => {});
 
   const cfg = loadConfig(cwd);
-  const usedPct = payload.context_window?.used_percentage ?? null;
+  const state = readContextState(cwd);
+  const usedPct = state?.pct ?? null;
 
   if (usedPct === null) {
+    // Statusline not configured or hasn't fired yet — no-op
     respond({});
     return;
   }

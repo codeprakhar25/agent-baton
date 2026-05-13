@@ -153,6 +153,28 @@ export interface RateLimitStatus {
   resetIn?: string;
 }
 
+/** Context usage state written by statusline, read by check/pretool */
+export interface ContextState {
+  agent: AgentName;
+  pct: number;
+  sessionId?: string;
+  updatedAt: string;
+}
+
+/** Payload shape from StatusLine mechanism (superset of hook payload — includes context_window) */
+export interface StatusLinePayload {
+  session_id?: string;
+  transcript_path?: string;
+  cwd?: string;
+  context_window?: {
+    used_percentage: number | null;
+    remaining_percentage: number | null;
+    context_window_size: number | null;
+    total_input_tokens: number | null;
+  };
+  model?: { id: string; display_name: string };
+}
+
 export interface WatchState {
   /** PID of the watched agent process */
   pid?: number;
