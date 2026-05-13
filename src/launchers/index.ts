@@ -31,6 +31,7 @@ function agentBin(agent: AgentName): string {
     case 'cursor': return 'cursor';
     case 'claude':  return 'claude';
     case 'codex':   return 'codex';
+    case 'gemini':  return 'gemini';
   }
 }
 
@@ -73,6 +74,11 @@ export function launchAgent(agent: AgentName, opts: LaunchOptions): void {
     case 'codex':
       // codex "prompt"
       args = [prompt];
+      break;
+
+    case 'gemini':
+      // gemini -p "prompt" for non-interactive session
+      args = ['-p', prompt];
       break;
   }
 

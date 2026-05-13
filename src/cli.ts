@@ -12,7 +12,7 @@
 import { Command } from 'commander';
 import type { AgentName } from './types.js';
 
-const VALID_AGENTS: AgentName[] = ['cursor', 'claude', 'codex'];
+const VALID_AGENTS: AgentName[] = ['cursor', 'claude', 'codex', 'gemini'];
 
 function assertAgent(value: string): AgentName {
   if (!VALID_AGENTS.includes(value as AgentName)) {

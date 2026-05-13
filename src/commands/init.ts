@@ -15,6 +15,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import chalk from 'chalk';
 import { execSync } from 'child_process';
 import { ensureRelayDirs, saveConfig, getRelayDir } from '../config.js';
@@ -38,6 +39,11 @@ function detectAgents(cwd: string): AgentName[] {
   // Codex: detect by codex binary
   if (isBinAvailable('codex') || fs.existsSync(path.join(cwd, '.codex'))) {
     detected.push('codex');
+  }
+
+  // Gemini CLI: detect by gemini binary or ~/.gemini dir
+  if (isBinAvailable('gemini') || fs.existsSync(path.join(os.homedir(), '.gemini'))) {
+    detected.push('gemini');
   }
 
   return detected;
@@ -187,6 +193,46 @@ function installCodexHook(cwd: string): HookInstallResult {
   return { agent: 'codex', status: 'installed', note: 'statusline skipped (tui.status_line undocumented — probe first)' };
 }
 
+function installGeminiHook(_cwd: string): HookInstallResult {
+  // Gemini CLI hooks live in ~/.gemini/settings.json (global, not project-scoped)
+  // Hook events: BeforeTool (equivalent to PreToolUse) and AfterTool
+  // Format: { hooks: { BeforeTool: { hooks: [{command, type}], matcher: ".*" } } }
+  const settingsFile = path.join(os.homedir(), '.gemini', 'settings.json');
+  fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+
+  let settings: Record<string, unknown> = {};
+  if (fs.existsSync(settingsFile)) {
+    try { settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8')); } catch { /* use default */ }
+  }
+
+  const bin = relayBinPath();
+  const hooks = (settings.hooks as Record<string, unknown>) ?? {};
+  let changed = false;
+
+  const addHook = (eventKey: string, command: string, matchStr: string): boolean => {
+    const existing = hooks[eventKey] as { hooks?: Array<{ command: string }>; matcher?: string } | undefined;
+    const hookList = existing?.hooks ?? [];
+    const alreadyIn = hookList.some(h => h.command?.includes(matchStr));
+    if (alreadyIn) return false;
+    hooks[eventKey] = {
+      hooks: [...hookList, { command, type: 'command' }],
+      matcher: '.*',
+    };
+    return true;
+  };
+
+  // BeforeTool = PreToolUse equivalent — mid-response context gate
+  changed = addHook('BeforeTool', `${bin} pretool --from gemini`, 'relay pretool') || changed;
+  // AfterTool = PostToolUse — use as Stop equivalent for rate limit detection
+  changed = addHook('AfterTool', `${bin} check --from gemini --event stop`, 'relay check') || changed;
+
+  if (!changed) return { agent: 'gemini', status: 'skipped', note: 'hooks already present' };
+
+  settings.hooks = hooks;
+  fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2), 'utf8');
+  return { agent: 'gemini', status: 'installed', note: 'written to ~/.gemini/settings.json (global)' };
+}
+
 function updateGitignore(cwd: string): void {
   const gitignorePath = path.join(cwd, '.gitignore');
   const entries = [
@@ -235,6 +281,7 @@ export async function runInit(cwd: string, force = false): Promise<void> {
         case 'cursor': result = installCursorHook(cwd); break;
         case 'claude': result = installClaudeHook(cwd); break;
         case 'codex':  result = installCodexHook(cwd);  break;
+        case 'gemini': result = installGeminiHook(cwd); break;
       }
       results.push(result);
     } catch (err) {

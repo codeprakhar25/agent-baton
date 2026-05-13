@@ -28,12 +28,14 @@ import { buildHandoffDoc, writeHandoff } from '../writers/handoff.js';
 import { findActiveClaudeTranscript } from '../extractors/transcript/claude.js';
 import { findActiveCursorTranscript } from '../extractors/transcript/cursor.js';
 import { findActiveCodexTranscript } from '../extractors/transcript/codex.js';
+import { findActiveGeminiTranscript } from '../extractors/transcript/gemini.js';
 
 function findTranscript(agent: AgentName, cwd: string): string | null {
   switch (agent) {
     case 'claude': return findActiveClaudeTranscript(cwd);
     case 'cursor': return findActiveCursorTranscript(cwd);
     case 'codex':  return findActiveCodexTranscript();
+    case 'gemini': return findActiveGeminiTranscript();
   }
 }
 

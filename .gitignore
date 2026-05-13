@@ -12,3 +12,6 @@ wiki/
 .relay/status.json
 .relay/pending-transfer.json
 .relay/config.json
+
+.relay/context-state.json
+.relay/danger-zone

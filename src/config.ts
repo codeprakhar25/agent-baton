@@ -7,6 +7,7 @@ const DEFAULT_CONFIG: RelayConfig = {
     cursor: { enabled: true, priority: 1 },
     claude: { enabled: true, priority: 2 },
     codex:  { enabled: true, priority: 3 },
+    gemini: { enabled: true, priority: 4 },
   },
   thresholds: {
     warn_percent: 85,

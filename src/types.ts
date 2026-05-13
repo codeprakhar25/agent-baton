@@ -1,4 +1,4 @@
-export type AgentName = 'cursor' | 'claude' | 'codex';
+export type AgentName = 'cursor' | 'claude' | 'codex' | 'gemini';
 
 export type ThresholdStage = 'warn' | 'prepare' | 'handoff' | 'none';
 
@@ -7,6 +7,7 @@ export interface RelayConfig {
     cursor: AgentConfig;
     claude: AgentConfig;
     codex: AgentConfig;
+    gemini: AgentConfig;
   };
   thresholds: {
     /** Soft warning — keep working but stay on current subtask */

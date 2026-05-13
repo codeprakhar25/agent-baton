@@ -1,155 +1,263 @@
 # agent-relay
 
-Cross-agent handoff tool for Cursor, Claude Code, and Codex. When one agent hits its limit (context window or subscription), relay captures the full task context and transfers work to the next agent — no lost progress.
+Transfer work between AI coding agents — Claude Code, Cursor, Codex, and Gemini CLI — when one hits its usage limit.
 
-**Extended docs:** see the [wiki/](wiki/) (origin prompt, research, architecture, what was built, phases, usage). The Cursor plan file for this effort: `C:\Users\prakh\.cursor\plans\Agent Relay Tool-9f8b164f.plan.md` (plan id `9f8b164f`).
+When an agent hits its weekly or session usage limit mid-task, `relay` reads the agent's session files directly, extracts the task state, appends the current git diff, and hands everything to the next agent with a structured briefing.
 
-## How It Works
+---
 
-Two paths handle limit events:
+## How it works
 
-**Clean path** (hooks detect threshold before limit hits):
-```
-Agent runs → hook fires on every turn → relay check reads context % →
-  at 85%: tells agent "write a handoff file" → agent writes HANDOFF-latest.md →
-  next hook fires → relay detects handoff written → blocks agent, shows transfer prompt →
-  user runs relay pickup → selects next agent → next agent starts with handoff context
-```
+Agents write structured session logs (JSONL) as they work. When a usage limit is hit, `relay` reads those logs directly — no agent response required — and extracts:
 
-**Dirty path** (agent died mid-task, no clean exit):
-```
-relay watch --from cursor (running in background) →
-  monitors transcript file size every 3s →
-  transcript stale for 15s AND agent process gone →
-  reads transcript tail + runs git diff →
-  writes emergency HANDOFF with "INCOMPLETE" banner →
-  prints transfer prompt in terminal →
-  user runs relay pickup → continues with next agent
-```
+- What the task was and what has been completed
+- Which files were modified (committed and uncommitted)
+- Recent tool calls and any errors encountered
+- The full git diff so the next agent sees every change
 
-`git diff` is always the ground truth — even an emergency handoff tells the next agent exactly what files were changed, even if the context is incomplete.
+This is written to a Markdown handoff file in `.relay/handoffs/`. Run `relay pickup` to choose the next agent and launch it with the handoff as its opening context.
+
+**Why relay reads session files directly:** When an agent hits a hard usage limit, it cannot respond. The handoff must be extracted from session files by relay itself — the agent cannot write anything.
+
+---
+
+## Supported agents
+
+| Agent | Session files | Hook events used |
+|-------|--------------|-----------------|
+| Claude Code | `~/.claude/projects/*/session.jsonl` | Stop, PreToolUse, PreCompact |
+| Cursor | `~/.cursor/sessions/*/rollout.jsonl` | stop, preToolUse, preCompact |
+| Codex | `~/.codex/sessions/**/*.jsonl` | Stop, PreToolUse, PreCompact |
+| Gemini CLI | `~/.gemini/tmp/*/checkpoint.jsonl` | BeforeTool, AfterTool |
+
+---
 
 ## Install
 
 ```bash
+npm install -g agent-relay
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/codeprakhar25/agent-relay
 cd agent-relay
 npm install
 npm run build
-npm install -g .    # makes 'relay' available on PATH
+npm link
 ```
+
+---
 
 ## Setup
 
+Run once per project:
+
 ```bash
 cd your-project
-relay init          # creates .relay/, installs hooks in .cursor/ .claude/ .codex/
+relay init
 ```
 
-## Usage
+This detects which agents are installed, creates `.relay/` in your project, and installs hooks into each agent's config so `relay` is called automatically.
+
+```
+relay init
+
+Detected agents: cursor, claude, codex, gemini
+
+✓ Created .relay/
+✓ cursor hook: installed
+✓ claude hook: installed
+✓ codex hook:  installed
+✓ gemini hook: installed  (written to ~/.gemini/settings.json — global)
+✓ Updated .gitignore
+```
+
+---
+
+## Commands
+
+### `relay handoff --from <agent>`
+
+Manually capture the current task state and write a handoff file. Use at any time — no need to wait for a limit.
 
 ```bash
-# Start the background safety-net daemon (run in a separate terminal)
-relay watch --from cursor
-
-# When limit hits, relay shows a prompt. Then:
-relay pickup                    # interactive: pick which agent to transfer to
-relay pickup --to claude        # skip picker, go straight to claude
-
-# Manual handoff (any time, not just at limit)
-relay handoff --from cursor
-relay handoff --from cursor --launch    # capture + immediately pick next agent
+relay handoff --from claude
+relay handoff --from cursor --launch   # also prompts to launch the next agent
 ```
 
-## Workflow
+### `relay pickup [--to <agent>]`
 
-```
-Terminal 1: your-agent running  (Cursor / Claude Code / Codex)
-Terminal 2: relay watch --from cursor
-```
+Choose the next agent and launch it with the handoff context. Shows an interactive picker if `--to` is omitted.
 
-When context hits 85% (configurable):
-- If hooks are installed: the agent itself writes the handoff and relay shows the transfer prompt
-- If the agent crashes: relay watch detects it within 15s and writes an emergency handoff
-
-Then in any terminal:
 ```bash
+relay pickup               # interactive agent picker
+relay pickup --to codex    # skip picker, launch codex directly
+relay pickup --to gemini
+```
+
+### `relay watch --from <agent>`
+
+Background safety-net daemon. Polls the agent's session file for signs of a hard stop — stale transcript, rate limit error patterns — and writes an emergency handoff if detected.
+
+```bash
+# Run in the background while your agent works
+relay watch --from claude &
+relay watch --from codex &
+```
+
+### `relay init`
+
+Set up relay in the current project. Safe to re-run — skips hooks that are already installed.
+
+```bash
+relay init          # auto-detect agents and install hooks
+relay init --force  # overwrite existing hooks
+```
+
+### `relay check --from <agent>`
+
+Called automatically by agent stop hooks after each turn. Checks context state and injects warnings when approaching limits. You do not need to call this manually.
+
+### `relay threshold <percent>` _(dev only)_
+
+Override all context thresholds to a single value to test handoff flows without filling a real context window.
+
+```bash
+relay threshold 10          # all warning stages fire at 10% context
+relay threshold --reset     # restore real thresholds (85 / 90 / 95%)
+relay threshold             # show current override and real thresholds
+```
+
+---
+
+## Typical workflow
+
+```bash
+# 1. Set up relay in your project
+relay init
+
+# 2. Start the safety-net daemon
+relay watch --from claude &
+
+# 3. Work normally. If claude hits a usage limit, relay writes a handoff automatically.
+#    You'll see: [relay] Emergency handoff written: .relay/handoffs/HANDOFF-latest.md
+
+# 4. Pick up the work in another agent
 relay pickup
-```
-```
-? Transfer to which agent?
-> claude  (priority 2)
-  codex   (priority 3)
-  Skip — just write the handoff, don't launch
+# → interactive picker: choose codex, cursor, or gemini
+# → launches the agent with the handoff as its opening prompt
 ```
 
-The selected agent starts with a prompt directing it to read the handoff file and continue.
+---
 
-## Handoff File
+## Handoff document format
 
-Handoffs are written to `.relay/handoffs/HANDOFF-<timestamp>.md` and also copied to `.relay/handoffs/HANDOFF-latest.md`.
+When a handoff is triggered, relay writes a Markdown file to `.relay/handoffs/`. The agent writes the narrative half; relay appends the technical half (git state, diff).
 
-Example:
 ```markdown
-# Relay Handoff: Refactor auth middleware to JWT
+# Relay Handoff: implement rate limit detection
 
-## Metadata
-| From Agent | cursor |
-| Reason     | Context window limit reached (91% used) |
-| Git Branch | feature/auth-refactor |
+## Task Description
+Add regex-based rate limit detection to the watch daemon so relay can
+detect when an agent has silently hit its usage quota.
 
 ## Progress
-- [x] Rewrote token validation logic
-- [x] Updated User model with refreshToken field
-- [ ] Write migration script for existing sessions
-- [ ] Add tests for token refresh flow
+- [x] Created src/monitors/rate-limit.ts with pattern matching
+- [x] Integrated into relay watch poll tick
+- [ ] Write tests for pattern matching edge cases
 
-## Modified Files (uncommitted)
-- `src/middleware/auth.ts` (modified)
-- `src/models/user.ts` (modified)
-...
+## Key Decisions Made
+- Used regex patterns over API calls — no auth required, works offline
+
+## Current State
+In src/commands/watch.ts at the tick() function. The readTailBytes()
+helper still needs to be added — that is the immediate next step.
+
+## Errors / Blockers
+- None
+
+---
+## Git State (appended by relay)
+
+**Branch:** `feat/rate-limit`  |  **Uncommitted changes:** Yes
+
+### Modified Files
+ M src/commands/watch.ts
+ M src/monitors/rate-limit.ts
+
+### Uncommitted Diff
+(full diff follows)
 ```
 
-## Config
+---
 
-`.relay/config.json` (created by `relay init`):
+## Configuration
+
+`.relay/config.json` is created by `relay init`. Edit it directly to tune behaviour.
 
 ```json
 {
+  "agents": {
+    "claude":  { "enabled": true, "priority": 2 },
+    "cursor":  { "enabled": true, "priority": 1 },
+    "codex":   { "enabled": true, "priority": 3 },
+    "gemini":  { "enabled": true, "priority": 4 }
+  },
   "thresholds": {
-    "context_window_percent": 85,
+    "warn_percent":       85,
+    "prepare_percent":    90,
+    "handoff_percent":    95,
     "rate_limit_percent": 90
   },
-  "agents": {
-    "cursor": { "enabled": true, "priority": 1 },
-    "claude": { "enabled": true, "priority": 2 },
-    "codex":  { "enabled": true, "priority": 3 }
-  },
+  "handoff_dir": ".relay/handoffs",
   "context_extraction": {
     "max_transcript_lines": 100,
-    "include_git_diff": true,
-    "max_diff_chars": 8000,
-    "scan_secrets": true
+    "include_git_diff":     true,
+    "max_diff_chars":       8000,
+    "scan_secrets":         true
   },
   "watch": {
-    "poll_interval_ms": 3000,
+    "poll_interval_ms":   3000,
     "stale_threshold_ms": 15000
   }
 }
 ```
 
-## The Mid-Task Collapse Problem
+**Agent priority** controls which agent is offered first in `relay pickup`. Lower number = higher priority.
 
-> "What if the agent is at 85% and in the next big task it collapses mid-turn at 100%?"
+---
 
-This is handled by `relay watch` (dirty path):
+## How `.relay/` is organized
 
-1. The hook fired at 85% → agent saw the `followup_message` → but started a new big task anyway
-2. That task pushed context to 100% mid-turn → agent errored or auto-compacted
-3. `relay watch` sees the transcript file stop growing
-4. After 15 seconds of silence, it triggers emergency extraction:
-   - Reads the last 100 lines of the JSONL transcript (last tool calls, messages)
-   - Runs `git diff HEAD` — this is the **ground truth** of everything that changed
-   - Writes an emergency handoff with the partial state
-5. User runs `relay pickup` → next agent reads the handoff + git diff → continues
+```
+.relay/
+  config.json           — project config (gitignored)
+  context-state.json    — latest context % from statusline (gitignored)
+  pending-transfer.json — set when a handoff is ready (gitignored)
+  watch-state.json      — daemon state (gitignored)
+  handoffs/             — handoff documents — commit these
+    HANDOFF-latest.md
+    HANDOFF-2026-05-12T14-30-00Z.md
+```
 
-The git diff is why this works even with messy context — it shows exactly what was done regardless of how the agent exited.
+Handoff files are meant to be committed — they are the record of what was done and what comes next.
+
+---
+
+## Limitations
+
+**Usage limits are reactive, not proactive.** None of the supported agents expose remaining billing quota as a local file or CLI flag. Relay detects usage limits by pattern-matching error messages that appear in session files when the limit is actually hit. Detection happens after the limit is reached, not before.
+
+**Gemini transcript format varies.** Gemini CLI session file locations differ between versions. Relay scans `~/.gemini/tmp/` and `~/.gemini/sessions/`. If your version writes elsewhere, extraction falls back to git-state-only and the handoff will still contain the full diff but no conversation summary.
+
+**Context window warnings are optional.** Relay includes a context-window detection tier (using each agent's StatusLine hook) that warns agents as they approach the token limit in the current conversation. This is separate from subscription limits. It requires configuring the `statusLine` setting in your agent's project config — `relay init` does this automatically.
+
+**Cursor hook format is undocumented.** Cursor's hook API is not publicly documented and has changed between versions. If hooks stop firing after a Cursor update, re-run `relay init`.
+
+---
+
+## License
+
+MIT — see [LICENSE](./LICENSE)
