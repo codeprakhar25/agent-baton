@@ -1,6 +1,6 @@
 {
   "name": "@codeprakhar25/agent-baton",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Cross-agent handoff tool: transfer work between Cursor, Claude Code, and Codex when limits are hit",
   "bin": {
     "baton": "./dist/cli.js"
