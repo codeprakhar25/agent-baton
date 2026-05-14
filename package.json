@@ -1,14 +1,20 @@
 {
-  "name": "agent-relay",
+  "name": "agent-baton",
   "version": "0.1.0",
   "description": "Cross-agent handoff tool: transfer work between Cursor, Claude Code, and Codex when limits are hit",
   "bin": {
-    "relay": "./dist/cli.js"
+    "baton": "./dist/cli.js"
   },
+  "files": [
+    "dist/cli.js",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "build": "tsup ",
+    "build": "tsup",
     "dev": "tsup --watch",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run lint && npm run build"
   },
   "dependencies": {
     "chalk": "^4.1.2",
