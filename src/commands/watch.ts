@@ -14,7 +14,7 @@ import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 import type { AgentName, WatchState } from '../types.js';
-import { loadConfig, getWatchStatePath, getBatonDir, getLatestHandoffPath, getUsageLimitPercent } from '../config.js';
+import { loadConfig, getWatchStatePath, getBatonDir, getLatestHandoffPath } from '../config.js';
 import { captureGitState } from '../extractors/git.js';
 import { extractSession } from '../extractors/transcript/index.js';
 import { buildHandoffDoc, writeHandoff } from '../writers/handoff.js';
@@ -125,7 +125,7 @@ async function maybeTriggerCodexUsageHandoff(
   const status = text
     ? parseCodexUsageFromText(text, transcriptPath)
     : readLatestCodexUsage(transcriptPath);
-  const trigger = getCodexUsageTrigger(status, getUsageLimitPercent(cfg));
+  const trigger = getCodexUsageTrigger(status, cfg);
 
   if (!trigger) return false;
 
@@ -179,7 +179,7 @@ export async function runWatch(agent: AgentName, cwd: string): Promise<void> {
   const { poll_interval_ms } = cfg.watch;
 
   console.log(chalk.cyan(`baton watch`) + ` — monitoring ${chalk.bold(agent)} session in ${cwd}`);
-  console.log(chalk.gray(`  Usage threshold: ${getUsageLimitPercent(cfg)}%`));
+  console.log(chalk.gray(`  Usage thresholds: per-agent window policies`));
   console.log(chalk.gray(`  Limit mode: ${cfg.limits.mode}`));
   console.log(chalk.gray(`  Press Ctrl+C to stop\n`));
 

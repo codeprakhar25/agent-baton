@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import type { AgentName } from '../types.js';
-import { getUsageLimitPercent, loadConfig } from '../config.js';
+import { loadConfig } from '../config.js';
 import {
   formatCodexUsageTrigger,
   formatNormalizedUsage,
@@ -45,7 +45,7 @@ export async function runUsage(
 
   if (agent === 'codex') {
     const status = readLatestCodexUsage();
-    const trigger = getCodexUsageTrigger(status, getUsageLimitPercent(cfg));
+    const trigger = getCodexUsageTrigger(status, cfg);
     if (opts.json) {
       console.log(JSON.stringify({ status, trigger }, null, 2));
       return;

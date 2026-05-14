@@ -1,8 +1,8 @@
 import { spawnSync } from 'child_process';
 import chalk from 'chalk';
 import { select } from '@inquirer/prompts';
-import { getUsageLimitPercent, loadConfig } from '../config.js';
-import { runHandoff, runPickup } from './handoff.js';
+import { loadConfig } from '../config.js';
+import { runPickup } from './handoff.js';
 import {
   formatCodexUsageTrigger,
   getCodexUsageTrigger,
@@ -27,7 +27,7 @@ export async function runCodex(cwd: string, rawArgs: string[] = []): Promise<voi
   const cfg = loadConfig(cwd);
   const args = rawArgs.filter(arg => arg !== '--');
   const status = readLatestCodexUsage();
-  const trigger = getCodexUsageTrigger(status, getUsageLimitPercent(cfg));
+  const trigger = getCodexUsageTrigger(status, cfg);
 
   if (!trigger) {
     if (status) {
@@ -51,7 +51,7 @@ export async function runCodex(cwd: string, rawArgs: string[] = []): Promise<voi
   });
 
   if (choice === 'handoff') {
-    await runHandoff('codex', cwd, false, 'rate_limit');
+    launchCodex(cwd, cfg.agents.codex.bin ?? 'codex', withAgentHandoffPrompt(args, formatCodexUsageTrigger(trigger)));
     return;
   }
 
@@ -67,7 +67,28 @@ function withUsageWarningPrompt(args: string[], summary: string): string[] {
   const warning = [
     `Baton usage warning: ${summary}.`,
     'Before doing more work, ask the user whether to continue in Codex with remaining quota or prepare a handoff.',
-    'If the user chooses handoff, run `baton handoff --from codex --reason rate-limit`, then tell the user to run `baton pickup`.',
+    'If the user chooses handoff, write the complete Markdown handoff file yourself, then run `baton handoff --from codex --reason rate-limit --file <path>`, and tell the user to run `baton pickup`.',
+  ].join(' ');
+
+  const promptIndex = findPromptIndex(args);
+  if (promptIndex === -1) {
+    return [...args, warning];
+  }
+
+  return [
+    ...args.slice(0, promptIndex),
+    `${warning}\n\nOriginal prompt:\n${args.slice(promptIndex).join(' ')}`,
+  ];
+}
+
+function withAgentHandoffPrompt(args: string[], summary: string): string[] {
+  const warning = [
+    `Baton usage warning: ${summary}.`,
+    'The user chose to create a handoff now.',
+    'Do not continue implementation work.',
+    'Write the complete Markdown handoff file yourself to a temporary file. Include the task, what is complete, what remains, important decisions, changed files, known errors, and the exact next step.',
+    'Then run `baton handoff --from codex --reason rate-limit --file <path>` using that file path.',
+    'After the command succeeds, tell the user to run `baton pickup`.',
   ].join(' ');
 
   const promptIndex = findPromptIndex(args);
