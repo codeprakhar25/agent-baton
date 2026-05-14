@@ -18,9 +18,7 @@ This tool does not monitor context-window fullness and does not install context 
 ## Install
 
 ```bash
-npm install
-npm run build
-npm link
+npm install -g @codeprakhar25/agent-baton
 ```
 
 ## Setup
