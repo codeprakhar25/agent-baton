@@ -2,7 +2,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import os from 'os';
 import path from 'path';
-import type { BatonConfig } from './types.js';
+import type { AgentName, BatonConfig, UsageWindowLimit, UsageWindowName } from './types.js';
 
 const DEFAULT_CONFIG: BatonConfig = {
   agents: {
@@ -18,6 +18,18 @@ const DEFAULT_CONFIG: BatonConfig = {
     mode: 'ask',
     handoff_percent: 95,
     auto_handoff_on_hard_limit: true,
+    windows: {
+      claude: {
+        five_hour: { enabled: true, handoff_percent: 95 },
+        weekly: { enabled: true, handoff_percent: 98 },
+        extra: { enabled: true, handoff_percent: 95 },
+      },
+      codex: {
+        five_hour: { enabled: true, handoff_percent: 95 },
+        weekly: { enabled: true, handoff_percent: 95 },
+        unknown: { enabled: true, handoff_percent: 95 },
+      },
+    },
   },
   storage: {
     state_root: defaultStateRoot(),
@@ -74,6 +86,10 @@ export function getUsageCachePath(cwd: string = process.cwd()): string {
   return path.join(getBatonDir(cwd), 'usage-cache.json');
 }
 
+export function getThresholdNotifiedPath(cwd: string = process.cwd()): string {
+  return path.join(getBatonDir(cwd), 'threshold-notified.json');
+}
+
 export function loadConfig(cwd: string = process.cwd()): BatonConfig {
   const globalRaw = readJsonFile(getGlobalConfigPath());
   const projectRaw = readJsonFile(getProjectConfigPath(cwd));
@@ -84,6 +100,17 @@ export function loadConfig(cwd: string = process.cwd()): BatonConfig {
 
 export function getUsageLimitPercent(config: BatonConfig): number {
   return config.limits.handoff_percent;
+}
+
+export function getUsageWindowLimit(
+  config: BatonConfig,
+  agent: Extract<AgentName, 'claude' | 'codex'>,
+  window: UsageWindowName,
+): UsageWindowLimit {
+  return config.limits.windows[agent]?.[window] ?? {
+    enabled: true,
+    handoff_percent: config.limits.handoff_percent,
+  };
 }
 
 export function saveConfig(config: Partial<BatonConfig>, cwd: string = process.cwd()): void {
@@ -183,11 +210,69 @@ function normalizeConfig(config: BatonConfig, raw: unknown): BatonConfig {
     config.limits.handoff_percent = DEFAULT_CONFIG.limits.handoff_percent;
   }
 
+  normalizeWindowLimits(config, rawLimits, rawThresholds);
+
   if (config.storage.project_id_strategy !== 'slug_hash') {
     config.storage.project_id_strategy = DEFAULT_CONFIG.storage.project_id_strategy;
   }
 
   return config;
+}
+
+function normalizeWindowLimits(
+  config: BatonConfig,
+  rawLimits: Record<string, unknown>,
+  rawThresholds: Record<string, unknown>,
+): void {
+  if (!config.limits.windows || typeof config.limits.windows !== 'object') {
+    config.limits.windows = structuredClone(DEFAULT_CONFIG.limits.windows);
+  }
+
+  config.limits.windows.claude = normalizeAgentWindows('claude', config);
+  config.limits.windows.codex = normalizeAgentWindows('codex', config);
+
+  const rawWindows = typeof rawLimits.windows === 'object' && rawLimits.windows !== null && !Array.isArray(rawLimits.windows)
+    ? rawLimits.windows as Record<string, unknown>
+    : {};
+  const hasRawWindowConfig = Object.keys(rawWindows).length > 0;
+  const hasLegacyPercent = typeof rawLimits.handoff_percent === 'number' || typeof rawThresholds.rate_limit_percent === 'number';
+
+  if (!hasRawWindowConfig && hasLegacyPercent) {
+    config.limits.windows.claude.five_hour = { enabled: true, handoff_percent: config.limits.handoff_percent };
+    config.limits.windows.claude.extra = { enabled: true, handoff_percent: config.limits.handoff_percent };
+    config.limits.windows.codex.five_hour = { enabled: true, handoff_percent: config.limits.handoff_percent };
+    config.limits.windows.codex.weekly = { enabled: true, handoff_percent: config.limits.handoff_percent };
+    config.limits.windows.codex.unknown = { enabled: true, handoff_percent: config.limits.handoff_percent };
+  }
+}
+
+function normalizeAgentWindows(
+  agent: Extract<AgentName, 'claude' | 'codex'>,
+  config: BatonConfig,
+): Record<UsageWindowName, UsageWindowLimit> {
+  const defaults = DEFAULT_CONFIG.limits.windows[agent] as Record<UsageWindowName, UsageWindowLimit>;
+  const raw = config.limits.windows[agent] as Partial<Record<UsageWindowName, Partial<UsageWindowLimit>>> | undefined;
+  const windows = { ...defaults } as Record<UsageWindowName, UsageWindowLimit>;
+
+  for (const [window, defaultPolicy] of Object.entries(defaults) as Array<[UsageWindowName, UsageWindowLimit]>) {
+    const override = raw?.[window];
+    windows[window] = normalizeWindowPolicy(override, defaultPolicy);
+  }
+
+  return windows;
+}
+
+function normalizeWindowPolicy(
+  policy: Partial<UsageWindowLimit> | undefined,
+  fallback: UsageWindowLimit,
+): UsageWindowLimit {
+  const handoffPercent = typeof policy?.handoff_percent === 'number' && Number.isFinite(policy.handoff_percent)
+    ? policy.handoff_percent
+    : fallback.handoff_percent;
+  return {
+    enabled: typeof policy?.enabled === 'boolean' ? policy.enabled : fallback.enabled,
+    handoff_percent: handoffPercent,
+  };
 }
 
 function loadConfigWithoutProjectState(cwd: string): BatonConfig {

@@ -1,4 +1,12 @@
 export type AgentName = 'cursor' | 'claude' | 'codex' | 'gemini';
+export type UsageWindowName = 'five_hour' | 'weekly' | 'extra' | 'unknown';
+
+export interface UsageWindowLimit {
+  enabled: boolean;
+  handoff_percent: number;
+}
+
+export type AgentUsageWindowLimits = Partial<Record<UsageWindowName, UsageWindowLimit>>;
 
 export interface BatonConfig {
   agents: {
@@ -7,7 +15,7 @@ export interface BatonConfig {
     codex: AgentConfig;
     gemini: AgentConfig;
   };
-  /** Legacy threshold config. Prefer limits.handoff_percent. */
+  /** Legacy threshold config. Prefer limits.windows. */
   thresholds: {
     /** Legacy handoff threshold when subscription rate limit exceeds this % */
     rate_limit_percent: number;
@@ -15,10 +23,15 @@ export interface BatonConfig {
   limits: {
     /** ask: prompt agent/user choice; auto_handoff: write handoff; warn_only: notify without blocking */
     mode: 'ask' | 'auto_handoff' | 'warn_only';
-    /** Warn or hand off when usage reaches this percentage */
+    /** Legacy fallback percentage used when a per-window policy is missing */
     handoff_percent: number;
     /** Automatically write a handoff when transcript text shows an actual hard limit */
     auto_handoff_on_hard_limit: boolean;
+    /** Per-agent usage window thresholds */
+    windows: {
+      claude: AgentUsageWindowLimits;
+      codex: AgentUsageWindowLimits;
+    };
   };
   storage: {
     /** Runtime state root; relative paths are expanded from the user home */
@@ -130,6 +143,12 @@ export interface HandoffDocument {
   keyDecisions: string[];
   modifiedFiles: string[];
   currentState: string;
+  /** Complete Markdown handoff written by the handing-off agent. */
+  agentAuthoredMarkdown?: string;
+  /** Original path of the agent-authored handoff before Baton registered it. */
+  sourceHandoffPath?: string;
+  /** Deprecated: brief human-authored summary written by the handing-off agent. */
+  agentNote?: string;
   errors: string[];
   handoffFilePath?: string;
 }
