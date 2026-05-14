@@ -1,17 +1,24 @@
 import fs from 'fs';
 import path from 'path';
-import type { AgentName, NormalizedUsageStatus } from '../types.js';
-import { getBatonDir, loadConfig } from '../config.js';
+import type { AgentName, BatonConfig, NormalizedUsageStatus } from '../types.js';
+import { getBatonDir, getThresholdNotifiedPath, loadConfig } from '../config.js';
 import { captureGitState } from '../extractors/git.js';
 import { extractSession } from '../extractors/transcript/index.js';
 import { findActiveClaudeTranscript } from '../extractors/transcript/claude.js';
-import { formatNormalizedUsage, lookupClaudeUsage } from '../extractors/usage.js';
+import { findActiveCodexTranscript } from '../extractors/transcript/codex.js';
+import { formatNormalizedUsage, getCodexUsageTrigger, lookupClaudeUsage, readLatestCodexUsage } from '../extractors/usage.js';
 import { buildHandoffDoc, writeHandoff } from '../writers/handoff.js';
 
-interface ClaudeHookInput {
+interface HookInput {
   hook_event_name?: string;
+  hookEventName?: string;
+  event_name?: string;
+  event?: string;
   transcript_path?: string;
   cwd?: string;
+  tool_name?: string;
+  tool_input?: Record<string, unknown>;
+  prompt?: string;
 }
 
 export async function runGuard(
@@ -19,7 +26,7 @@ export async function runGuard(
   cwd: string,
   opts: { hook?: boolean; phase?: string; refresh?: boolean } = {},
 ): Promise<void> {
-  if (agent !== 'claude') {
+  if (agent !== 'claude' && agent !== 'codex') {
     emitHookJson({ suppressOutput: true });
     return;
   }
@@ -27,8 +34,16 @@ export async function runGuard(
   const hookInput = opts.hook ? readHookInput() : {};
   const resolvedCwd = hookInput.cwd ?? cwd;
   const cfg = loadConfig(resolvedCwd);
-  const phase = hookInput.hook_event_name ?? opts.phase;
+  const phase = hookInput.hook_event_name ?? hookInput.hookEventName ?? hookInput.event_name ?? hookInput.event ?? opts.phase;
+
+  if (agent === 'codex') {
+    await runCodexGuard(resolvedCwd, cfg, phase);
+    return;
+  }
+
+  // Claude guard
   const shouldFetch = opts.refresh || phase === 'SessionStart' || opts.phase === 'session-start';
+
   const initial = await lookupClaudeUsage({
     cwd: resolvedCwd,
     config: cfg,
@@ -44,70 +59,148 @@ export async function runGuard(
     return;
   }
 
+  // SessionStart: refresh usage cache, clear prior notification.
   if (isSessionStart(phase)) {
+    clearThresholdNotified(resolvedCwd);
     emitHookJson({ suppressOutput: true });
     return;
   }
 
+  // Usage dropped below threshold — clear any stale notification.
   if (!initial.status.triggered) {
+    clearThresholdNotified(resolvedCwd);
     emitHookJson({ suppressOutput: true });
     return;
   }
 
+  // Triggered — do a confirmatory fresh fetch unless we already fetched.
   const confirmed = shouldFetch
     ? initial
     : await lookupClaudeUsage({ cwd: resolvedCwd, config: cfg, refresh: true });
   const usage = confirmed.status ?? initial.status;
 
   if (!usage.triggered) {
+    clearThresholdNotified(resolvedCwd);
     emitHookJson({ suppressOutput: true });
     return;
   }
 
-  const warning = buildChoicePromptMessage(usage, confirmed.error);
-
-  if (cfg.limits.mode === 'warn_only') {
-    emitWarningForHook(phase, warning);
+  // auto_handoff: always write handoff and block.
+  if (cfg.limits.mode === 'auto_handoff') {
+    const transcriptPath = (hookInput as { transcript_path?: string }).transcript_path ?? findActiveClaudeTranscript(resolvedCwd);
+    const handoffPath = writeUsageLimitHandoff('claude', resolvedCwd, transcriptPath, usage, cfg);
+    const message = [
+      `${usage.triggerReason ?? 'Claude usage limit threshold crossed'}.`,
+      confirmed.error ? `Fresh usage check failed, using cached usage: ${confirmed.error}.` : '',
+      `Baton wrote a handoff: ${handoffPath}.`,
+      'Run `baton pickup` to continue in another agent, or disable/remove the Baton hook if you intentionally want to keep using Claude.',
+    ].filter(Boolean).join(' ');
+    emitBlockForHook(phase, message);
     return;
   }
 
-  if (cfg.limits.mode === 'ask') {
-    emitAskForHook(phase, warning);
+  // ask / warn_only: notify once per session.
+  if (isThresholdNotified(resolvedCwd)) {
+    emitHookJson({ suppressOutput: true });
     return;
   }
 
-  const transcriptPath = hookInput.transcript_path ?? findActiveClaudeTranscript(resolvedCwd);
-  const handoffPath = writeUsageLimitHandoff('claude', resolvedCwd, transcriptPath, usage);
-  const message = [
-    `${usage.triggerReason ?? 'Claude usage limit threshold crossed'}.`,
-    confirmed.error ? `Fresh usage check failed, using cached usage: ${confirmed.error}.` : '',
-    `Baton wrote a handoff: ${handoffPath}.`,
-    'Run `baton pickup` to continue in another agent, or disable/remove the Baton hook if you intentionally want to keep using Claude.',
-  ].filter(Boolean).join(' ');
+  markThresholdNotified(resolvedCwd, usage);
 
-  emitBlockForHook(phase, message);
+  const warning = buildClaudeChoiceMessage(usage, confirmed.error);
+
+  // Only inject on UserPromptSubmit — PreToolUse passes through.
+  if (isUserPromptSubmit(phase)) {
+    emitHookJson({
+      hookSpecificOutput: {
+        hookEventName: 'UserPromptSubmit',
+        additionalContext: `Baton usage warning: ${warning}`,
+      },
+    });
+  } else {
+    emitHookJson({ suppressOutput: true });
+  }
 }
 
-function buildChoicePromptMessage(usage: NormalizedUsageStatus, refreshError?: string): string {
+async function runCodexGuard(cwd: string, cfg: BatonConfig, phase: string | undefined): Promise<void> {
+  // SessionStart: clear prior notification.
+  if (isSessionStart(phase)) {
+    clearThresholdNotified(cwd);
+    emitHookJson({ suppressOutput: true });
+    return;
+  }
+
+  const status = readLatestCodexUsage();
+  const trigger = getCodexUsageTrigger(status, cfg);
+
+  if (!trigger) {
+    clearThresholdNotified(cwd);
+    emitHookJson({ suppressOutput: true });
+    return;
+  }
+
+  // auto_handoff: write handoff and block.
+  if (cfg.limits.mode === 'auto_handoff' || (trigger.status.rateLimitReachedType && cfg.limits.auto_handoff_on_hard_limit)) {
+    const transcriptPath = findActiveCodexTranscript();
+    const handoffPath = writeUsageLimitHandoff('codex', cwd, transcriptPath, null, cfg, trigger.reason);
+    const message = `${trigger.reason}. Baton wrote a handoff: ${handoffPath}. Run \`baton pickup\` to continue in another agent.`;
+    emitBlockForHook(phase, message);
+    return;
+  }
+
+  // ask / warn_only: notify once per session.
+  if (isThresholdNotified(cwd)) {
+    emitHookJson({ suppressOutput: true });
+    return;
+  }
+
+  markThresholdNotifiedRaw(cwd, trigger.reason);
+
+  const warning = buildCodexChoiceMessage(trigger.reason);
+
+  if (isUserPromptSubmit(phase)) {
+    emitHookJson({
+      hookSpecificOutput: {
+        hookEventName: 'UserPromptSubmit',
+        additionalContext: `Baton usage warning: ${warning}`,
+      },
+    });
+  } else {
+    emitHookJson({ suppressOutput: true });
+  }
+}
+
+function buildClaudeChoiceMessage(usage: NormalizedUsageStatus, refreshError?: string): string {
   return [
     `${usage.triggerReason ?? 'Claude usage limit threshold crossed'}.`,
     refreshError ? `Fresh usage check failed, using cached usage: ${refreshError}.` : '',
     'Before doing more work, ask the user to choose: continue in Claude with the remaining quota, or write a handoff and stop.',
-    'If the user chooses handoff, run `baton handoff --from claude --reason rate-limit` or write a detailed handoff directly, then tell the user to run `baton pickup`.',
+    'If the user chooses handoff, write the complete Markdown handoff file yourself, then run `baton handoff --from claude --reason rate-limit --file <path>`, and tell the user to run `baton pickup`.',
     'Do not write `pending-transfer.json` unless a handoff is requested or created.',
+    'If a Baton permission prompt appears, proceed only when the user confirms that choice.',
   ].filter(Boolean).join(' ');
+}
+
+function buildCodexChoiceMessage(reason: string): string {
+  return [
+    `${reason}.`,
+    'Before doing more work, ask the user to choose: continue in Codex with the remaining quota, or write a handoff and stop.',
+    'If the user chooses handoff, write the complete Markdown handoff file yourself, then run `baton handoff --from codex --reason rate-limit --file <path>`, and tell the user to run `baton pickup`.',
+    'Do not write `pending-transfer.json` unless a handoff is requested or created.',
+  ].join(' ');
 }
 
 function writeUsageLimitHandoff(
   agent: AgentName,
   cwd: string,
   transcriptPath: string | null,
-  usage: NormalizedUsageStatus,
+  usage: NormalizedUsageStatus | null,
+  cfg: BatonConfig,
+  summary?: string,
 ): string {
-  const cfg = loadConfig(cwd);
   const git = captureGitState(cwd, cfg.handoff_extraction.max_diff_chars);
   const session = extractSession(agent, transcriptPath, cwd, cfg.handoff_extraction.max_transcript_lines);
-  const summary = formatNormalizedUsage(usage);
+  const usageSummary = summary ?? (usage ? formatNormalizedUsage(usage) : 'usage limit reached');
 
   const doc = buildHandoffDoc({
     fromAgent: agent,
@@ -116,7 +209,7 @@ function writeUsageLimitHandoff(
     session,
     taskDescription: session.lastUserMessage ?? 'Unknown - see transcript tail',
     currentState: [
-      `Usage-limit guard stopped Claude: ${summary}.`,
+      `Usage-limit guard stopped ${agent}: ${usageSummary}.`,
       `Last assistant message: ${session.lastAssistantSummary ?? '(none)'}`,
     ].join(' '),
     errors: session.errors,
@@ -129,66 +222,61 @@ function writeUsageLimitHandoff(
     reason: 'rate_limit',
     handoffPath,
     triggeredAt: new Date().toISOString(),
-    usage,
+    ...(usage ? { usage } : {}),
   }, null, 2), 'utf8');
 
   return handoffPath;
 }
 
-function readHookInput(): ClaudeHookInput {
+function isThresholdNotified(cwd: string): boolean {
+  return fs.existsSync(getThresholdNotifiedPath(cwd));
+}
+
+function markThresholdNotified(cwd: string, usage: NormalizedUsageStatus): void {
+  markThresholdNotifiedRaw(cwd, usage.triggerReason ?? 'threshold crossed');
+}
+
+function markThresholdNotifiedRaw(cwd: string, reason: string): void {
+  try {
+    fs.mkdirSync(path.dirname(getThresholdNotifiedPath(cwd)), { recursive: true });
+    fs.writeFileSync(getThresholdNotifiedPath(cwd), JSON.stringify({
+      notifiedAt: new Date().toISOString(),
+      triggerReason: reason,
+    }, null, 2), 'utf8');
+  } catch { /* best effort */ }
+}
+
+function clearThresholdNotified(cwd: string): void {
+  try {
+    fs.unlinkSync(getThresholdNotifiedPath(cwd));
+  } catch { /* already absent */ }
+}
+
+// Codex v0.118+ passes the hook payload as a positional argv JSON string.
+// Older versions and Claude Code use stdin.
+function readHookInput(): HookInput {
+  // Try last argv first (Codex v0.118+ style).
+  const lastArg = process.argv[process.argv.length - 1];
+  if (lastArg && lastArg.startsWith('{')) {
+    try {
+      return JSON.parse(lastArg) as HookInput;
+    } catch { /* fall through to stdin */ }
+  }
+
+  // Fall back to stdin (Claude Code and older Codex).
   try {
     if (process.stdin.isTTY) return {};
     const raw = fs.readFileSync(0, 'utf8').trim();
     if (!raw) return {};
-    return JSON.parse(raw) as ClaudeHookInput;
+    // Codex may send multiple JSONL lines — use the last valid one.
+    const lines = raw.split('\n').filter(l => l.trim().startsWith('{'));
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try { return JSON.parse(lines[i]) as HookInput; } catch { /* try next */ }
+    }
+    return {};
   } catch {
     return {};
   }
-}
-
-function emitAskForHook(eventName: string | undefined, message: string): void {
-  if (isPreToolUse(eventName)) {
-    emitHookJson({
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'deny',
-        permissionDecisionReason: `Baton usage warning: ${message} Ask the user for this choice before using tools.`,
-      },
-    });
-    return;
-  }
-
-  if (isUserPromptSubmit(eventName)) {
-    emitHookJson({
-      hookSpecificOutput: {
-        hookEventName: 'UserPromptSubmit',
-        additionalContext: `Baton usage warning: ${message}`,
-      },
-    });
-    return;
-  }
-
-  emitHookJson({
-    decision: 'block',
-    reason: `Baton usage warning: ${message}`,
-  });
-}
-
-function emitWarningForHook(eventName: string | undefined, message: string): void {
-  if (isUserPromptSubmit(eventName)) {
-    emitHookJson({
-      hookSpecificOutput: {
-        hookEventName: 'UserPromptSubmit',
-        additionalContext: `Baton usage warning: ${message}`,
-      },
-    });
-    return;
-  }
-
-  emitHookJson({
-    suppressOutput: true,
-    systemMessage: `Baton usage warning: ${message}`,
-  });
 }
 
 function emitBlockForHook(eventName: string | undefined, reason: string): void {
