@@ -1,8 +1,8 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import type { NormalizedUsageStatus, BatonConfig } from '../types.js';
-import { getUsageCachePath, getUsageLimitPercent } from '../config.js';
+import type { NormalizedUsageStatus, BatonConfig, UsageWindowName } from '../types.js';
+import { getUsageCachePath, getUsageWindowLimit } from '../config.js';
 import { findActiveCodexTranscript } from './transcript/codex.js';
 import { tailFile } from './transcript/common.js';
 
@@ -49,31 +49,29 @@ export async function lookupClaudeUsage(
   options: ClaudeUsageLookupOptions,
 ): Promise<ClaudeUsageLookupResult> {
   const cached = readUsageCache(options.cwd, 'claude');
-  const threshold = getUsageLimitPercent(options.config);
-
   if (options.cacheOnly) {
     if (!cached) {
       return { status: null, error: 'Claude usage cache missing' };
     }
     return {
-      status: evaluateUsageThreshold(markCacheAge(cached), threshold),
+      status: evaluateClaudeUsageThreshold(markCacheAge(cached), options.config),
     };
   }
 
   if (!options.refresh && cached && isUsageCacheFresh(cached, options.config)) {
     return {
-      status: evaluateUsageThreshold({ ...cached, cacheStatus: 'fresh' }, threshold),
+      status: evaluateClaudeUsageThreshold({ ...cached, cacheStatus: 'fresh' }, options.config),
     };
   }
 
   try {
-    const status = await fetchClaudeOAuthUsage(options.config, threshold);
+    const status = await fetchClaudeOAuthUsage(options.config);
     writeUsageCache(options.cwd, status);
     return { status };
   } catch (err) {
     if (cached) {
       return {
-        status: evaluateUsageThreshold({ ...cached, cacheStatus: 'stale', stale: true }, threshold),
+        status: evaluateClaudeUsageThreshold({ ...cached, cacheStatus: 'stale', stale: true }, options.config),
         error: String(err instanceof Error ? err.message : err),
       };
     }
@@ -155,7 +153,7 @@ export function parseCodexUsageFromText(
 
 export function getCodexUsageTrigger(
   status: CodexUsageStatus | null,
-  thresholdPercent: number,
+  config: BatonConfig,
 ): CodexUsageTrigger | null {
   if (!status) return null;
 
@@ -167,7 +165,10 @@ export function getCodexUsageTrigger(
   }
 
   const window = status.windows
-    .filter(w => w.usedPercent >= thresholdPercent)
+    .filter(w => {
+      const policy = getUsageWindowLimit(config, 'codex', codexWindowPolicyName(w));
+      return policy.enabled && w.usedPercent >= policy.handoff_percent;
+    })
     .sort((a, b) => b.usedPercent - a.usedPercent)[0];
 
   if (!window) return null;
@@ -285,7 +286,6 @@ function markCacheAge(status: NormalizedUsageStatus): NormalizedUsageStatus {
 
 async function fetchClaudeOAuthUsage(
   config: BatonConfig,
-  thresholdPercent: number,
 ): Promise<NormalizedUsageStatus> {
   const credentialsPath = expandHome(config.usage_sources.claude.oauth_credentials_path);
   const token = readClaudeAccessToken(credentialsPath);
@@ -307,7 +307,7 @@ async function fetchClaudeOAuthUsage(
   }
 
   const raw = await response.json() as ClaudeOAuthUsageResponse;
-  return evaluateUsageThreshold({
+  return evaluateClaudeUsageThreshold({
     agent: 'claude',
     source: 'claude-oauth',
     fetchedAt: new Date().toISOString(),
@@ -318,7 +318,7 @@ async function fetchClaudeOAuthUsage(
     fiveHourResetsAt: asString(raw.five_hour?.resets_at),
     weeklyResetsAt: asString(raw.seven_day?.resets_at),
     triggered: false,
-  }, thresholdPercent);
+  }, config);
 }
 
 function readClaudeAccessToken(credentialsPath: string): string | null {
@@ -334,18 +334,21 @@ function readClaudeAccessToken(credentialsPath: string): string | null {
   }
 }
 
-function evaluateUsageThreshold(
+function evaluateClaudeUsageThreshold(
   status: NormalizedUsageStatus,
-  thresholdPercent: number,
+  config: BatonConfig,
 ): NormalizedUsageStatus {
   const candidates = [
-    { label: '5-hour', percent: status.fiveHourPercent },
-    { label: 'weekly', percent: status.weeklyPercent },
-    { label: 'extra', percent: status.extraUsagePercent },
-  ].filter((entry): entry is { label: string; percent: number } => typeof entry.percent === 'number');
+    { label: '5-hour', window: 'five_hour', percent: status.fiveHourPercent },
+    { label: 'weekly', window: 'weekly', percent: status.weeklyPercent },
+    { label: 'extra', window: 'extra', percent: status.extraUsagePercent },
+  ].filter((entry): entry is { label: string; window: UsageWindowName; percent: number } => typeof entry.percent === 'number');
 
   const hit = candidates
-    .filter(({ percent }) => percent >= thresholdPercent)
+    .filter(({ window, percent }) => {
+      const policy = getUsageWindowLimit(config, 'claude', window);
+      return policy.enabled && percent >= policy.handoff_percent;
+    })
     .sort((a, b) => b.percent - a.percent)[0];
 
   if (!hit) {
@@ -357,6 +360,12 @@ function evaluateUsageThreshold(
     triggered: true,
     triggerReason: `Claude ${hit.label} usage is ${hit.percent.toFixed(0)}%`,
   };
+}
+
+function codexWindowPolicyName(window: CodexUsageWindow): UsageWindowName {
+  if (window.kind === 'five_hour') return 'five_hour';
+  if (window.kind === 'weekly') return 'weekly';
+  return 'unknown';
 }
 
 function expandHome(filePath: string): string {
