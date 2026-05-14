@@ -1,7 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import type { NormalizedUsageStatus, RelayConfig } from '../types.js';
+import type { NormalizedUsageStatus, BatonConfig } from '../types.js';
 import { getUsageCachePath, getUsageLimitPercent } from '../config.js';
 import { findActiveCodexTranscript } from './transcript/codex.js';
 import { tailFile } from './transcript/common.js';
@@ -35,7 +35,7 @@ export interface CodexUsageTrigger {
 
 export interface ClaudeUsageLookupOptions {
   cwd: string;
-  config: RelayConfig;
+  config: BatonConfig;
   refresh?: boolean;
   cacheOnly?: boolean;
 }
@@ -257,7 +257,7 @@ function writeUsageCache(cwd: string, status: NormalizedUsageStatus): void {
   fs.writeFileSync(cachePath, JSON.stringify(status, null, 2), 'utf8');
 }
 
-function isUsageCacheFresh(status: NormalizedUsageStatus, config: RelayConfig): boolean {
+function isUsageCacheFresh(status: NormalizedUsageStatus, config: BatonConfig): boolean {
   const fetched = Date.parse(status.fetchedAt);
   if (!Number.isFinite(fetched)) return false;
 
@@ -284,7 +284,7 @@ function markCacheAge(status: NormalizedUsageStatus): NormalizedUsageStatus {
 }
 
 async function fetchClaudeOAuthUsage(
-  config: RelayConfig,
+  config: BatonConfig,
   thresholdPercent: number,
 ): Promise<NormalizedUsageStatus> {
   const credentialsPath = expandHome(config.usage_sources.claude.oauth_credentials_path);

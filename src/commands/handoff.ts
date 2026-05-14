@@ -1,5 +1,5 @@
 /**
- * relay handoff --from <agent>
+ * baton handoff --from <agent>
  *
  * Manual handoff: extract task state from the current agent session,
  * write the handoff document, then optionally launch the next agent.
@@ -11,7 +11,7 @@ import path from 'path';
 import chalk from 'chalk';
 import { select } from '@inquirer/prompts';
 import type { AgentName, HandoffDocument } from '../types.js';
-import { loadConfig, getLatestHandoffPath, getRelayDir } from '../config.js';
+import { loadConfig, getLatestHandoffPath, getBatonDir, getHandoffDir } from '../config.js';
 import { captureGitState } from '../extractors/git.js';
 import { extractSession } from '../extractors/transcript/index.js';
 import { buildHandoffDoc, writeHandoff } from '../writers/handoff.js';
@@ -25,7 +25,7 @@ export async function runHandoff(
 ): Promise<void> {
   const cfg = loadConfig(cwd);
 
-  console.log(chalk.bold(`\nrelay handoff — from: ${chalk.cyan(fromAgent)}\n`));
+  console.log(chalk.bold(`\nbaton handoff — from: ${chalk.cyan(fromAgent)}\n`));
   console.log(chalk.gray('Capturing task state...'));
 
   // 1. Git state
@@ -54,7 +54,7 @@ export async function runHandoff(
   }
 
   console.log(`Handoff file: ${chalk.cyan(handoffPath)}`);
-  console.log(`\nRun ${chalk.cyan('relay pickup')} to transfer to the next agent.`);
+  console.log(`\nRun ${chalk.cyan('baton pickup')} to transfer to the next agent.`);
   console.log(`Or open the handoff file to review it before transferring.\n`);
 }
 
@@ -64,7 +64,7 @@ function writePendingTransfer(
   handoffPath: string,
   reason: HandoffDocument['reason'],
 ): void {
-  fs.writeFileSync(path.join(getRelayDir(cwd), 'pending-transfer.json'), JSON.stringify({
+  fs.writeFileSync(path.join(getBatonDir(cwd), 'pending-transfer.json'), JSON.stringify({
     agent,
     reason,
     handoffPath,
@@ -77,12 +77,12 @@ export async function runPickup(cwd: string, toAgent?: AgentName): Promise<void>
 
   const handoffPath = getLatestHandoffPath(cwd);
   if (!handoffPath) {
-    console.log(chalk.yellow('No handoff file found in .relay/handoffs/'));
-    console.log(chalk.gray(`Run \`relay handoff --from <agent>\` first to create one.\n`));
+    console.log(chalk.yellow(`No handoff file found in ${getHandoffDir(cwd)}`));
+    console.log(chalk.gray(`Run \`baton handoff --from <agent>\` first to create one.\n`));
     process.exit(1);
   }
 
-  console.log(chalk.bold('\nrelay pickup\n'));
+  console.log(chalk.bold('\nbaton pickup\n'));
   console.log(chalk.gray(`Handoff: ${handoffPath}\n`));
 
   if (toAgent) {
@@ -135,7 +135,7 @@ async function selectAndLaunch(
 async function launchWithAgent(agent: AgentName, cwd: string, handoffPath: string): Promise<void> {
   if (!isAgentAvailable(agent)) {
     console.log(chalk.red(`\n${agent} is not installed or not on PATH.`));
-    console.log(chalk.gray(`Install it and try: relay pickup --to ${agent}\n`));
+    console.log(chalk.gray(`Install it and try: baton pickup --to ${agent}\n`));
     process.exit(1);
   }
 
@@ -147,7 +147,7 @@ async function launchWithAgent(agent: AgentName, cwd: string, handoffPath: strin
   launchAgent(agent, { cwd, handoffPath, relativeHandoffPath: relPath });
 
   // Clear the pending transfer flag after successful launch
-  const flagPath = path.join(cwd, '.relay', 'pending-transfer.json');
+  const flagPath = path.join(getBatonDir(cwd), 'pending-transfer.json');
   if (fs.existsSync(flagPath)) {
     fs.unlinkSync(flagPath);
   }

@@ -2,14 +2,9 @@ node_modules/
 dist/
 *.js.map
 
-# agent-relay internals (handoffs are committed, internals are not)
-.relay/
+# agent-baton local overrides and agent project config
+.baton/
 .cursor
 .claude
 .codex
 wiki/
-.relay/watch-state.json
-.relay/status.json
-.relay/usage-cache.json
-.relay/pending-transfer.json
-.relay/config.json

@@ -98,5 +98,6 @@ export function launchAgent(agent: AgentName, opts: LaunchOptions): void {
 
 /** Return the handoff path relative to cwd for embedding in prompts */
 export function relativeHandoffPath(handoffPath: string, cwd: string): string {
-  return path.relative(cwd, handoffPath);
+  const relative = path.relative(cwd, handoffPath);
+  return relative.startsWith('..') || path.isAbsolute(relative) ? handoffPath : relative;
 }

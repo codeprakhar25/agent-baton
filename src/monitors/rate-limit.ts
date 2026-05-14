@@ -1,5 +1,5 @@
 /**
- * Rate limit error detection patterns for relay watch.
+ * Rate limit error detection patterns for baton watch.
  * Used to detect when an agent hit a hard rate limit mid-session
  * by scanning new bytes appended to the transcript file.
  */

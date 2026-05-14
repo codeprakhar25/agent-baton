@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { AgentName, NormalizedUsageStatus } from '../types.js';
-import { getRelayDir, loadConfig } from '../config.js';
+import { getBatonDir, loadConfig } from '../config.js';
 import { captureGitState } from '../extractors/git.js';
 import { extractSession } from '../extractors/transcript/index.js';
 import { findActiveClaudeTranscript } from '../extractors/transcript/claude.js';
@@ -39,7 +39,7 @@ export async function runGuard(
   if (!initial.status) {
     emitHookJson({
       suppressOutput: true,
-      systemMessage: `Relay could not read Claude usage: ${initial.error ?? 'unknown error'}`,
+      systemMessage: `Baton could not read Claude usage: ${initial.error ?? 'unknown error'}`,
     });
     return;
   }
@@ -81,8 +81,8 @@ export async function runGuard(
   const message = [
     `${usage.triggerReason ?? 'Claude usage limit threshold crossed'}.`,
     confirmed.error ? `Fresh usage check failed, using cached usage: ${confirmed.error}.` : '',
-    `Relay wrote a handoff: ${handoffPath}.`,
-    'Run `relay pickup` to continue in another agent, or disable/remove the Relay hook if you intentionally want to keep using Claude.',
+    `Baton wrote a handoff: ${handoffPath}.`,
+    'Run `baton pickup` to continue in another agent, or disable/remove the Baton hook if you intentionally want to keep using Claude.',
   ].filter(Boolean).join(' ');
 
   emitBlockForHook(phase, message);
@@ -93,8 +93,8 @@ function buildChoicePromptMessage(usage: NormalizedUsageStatus, refreshError?: s
     `${usage.triggerReason ?? 'Claude usage limit threshold crossed'}.`,
     refreshError ? `Fresh usage check failed, using cached usage: ${refreshError}.` : '',
     'Before doing more work, ask the user to choose: continue in Claude with the remaining quota, or write a handoff and stop.',
-    'If the user chooses handoff, run `relay handoff --from claude --reason rate-limit` or write a detailed handoff directly, then tell the user to run `relay pickup`.',
-    'Do not write `.relay/pending-transfer.json` unless a handoff is requested or created.',
+    'If the user chooses handoff, run `baton handoff --from claude --reason rate-limit` or write a detailed handoff directly, then tell the user to run `baton pickup`.',
+    'Do not write `pending-transfer.json` unless a handoff is requested or created.',
   ].filter(Boolean).join(' ');
 }
 
@@ -124,7 +124,7 @@ function writeUsageLimitHandoff(
 
   const handoffPath = writeHandoff(doc, cwd);
 
-  fs.writeFileSync(path.join(getRelayDir(cwd), 'pending-transfer.json'), JSON.stringify({
+  fs.writeFileSync(path.join(getBatonDir(cwd), 'pending-transfer.json'), JSON.stringify({
     agent,
     reason: 'rate_limit',
     handoffPath,
@@ -152,7 +152,7 @@ function emitAskForHook(eventName: string | undefined, message: string): void {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
-        permissionDecisionReason: `Relay usage warning: ${message} Ask the user for this choice before using tools.`,
+        permissionDecisionReason: `Baton usage warning: ${message} Ask the user for this choice before using tools.`,
       },
     });
     return;
@@ -162,7 +162,7 @@ function emitAskForHook(eventName: string | undefined, message: string): void {
     emitHookJson({
       hookSpecificOutput: {
         hookEventName: 'UserPromptSubmit',
-        additionalContext: `Relay usage warning: ${message}`,
+        additionalContext: `Baton usage warning: ${message}`,
       },
     });
     return;
@@ -170,7 +170,7 @@ function emitAskForHook(eventName: string | undefined, message: string): void {
 
   emitHookJson({
     decision: 'block',
-    reason: `Relay usage warning: ${message}`,
+    reason: `Baton usage warning: ${message}`,
   });
 }
 
@@ -179,7 +179,7 @@ function emitWarningForHook(eventName: string | undefined, message: string): voi
     emitHookJson({
       hookSpecificOutput: {
         hookEventName: 'UserPromptSubmit',
-        additionalContext: `Relay usage warning: ${message}`,
+        additionalContext: `Baton usage warning: ${message}`,
       },
     });
     return;
@@ -187,7 +187,7 @@ function emitWarningForHook(eventName: string | undefined, message: string): voi
 
   emitHookJson({
     suppressOutput: true,
-    systemMessage: `Relay usage warning: ${message}`,
+    systemMessage: `Baton usage warning: ${message}`,
   });
 }
 

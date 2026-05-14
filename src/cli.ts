@@ -1,14 +1,14 @@
 /**
- * relay — cross-agent limit-aware handoff tool
+ * baton — cross-agent limit-aware handoff tool
  *
  * Commands:
- *   relay init                    — set up relay in current project
- *   relay usage --from <agent>    — print current usage-limit status
- *   relay guard --from <agent>    — hook command for usage-limit blocking
- *   relay watch --from <agent>    — monitor usage limits and warn or hand off
- *   relay handoff --from <agent>  — manually capture task state + handoff file
- *   relay pickup [--to <agent>]   — choose next agent and launch it with handoff
- *   relay codex [-- <args>]       — preflight usage and launch Codex
+ *   baton init                    — set up baton in current project
+ *   baton usage --from <agent>    — print current usage-limit status
+ *   baton guard --from <agent>    — hook command for usage-limit blocking
+ *   baton watch --from <agent>    — monitor usage limits and warn or hand off
+ *   baton handoff --from <agent>  — manually capture task state + handoff file
+ *   baton pickup [--to <agent>]   — choose next agent and launch it with handoff
+ *   baton codex [-- <args>]       — preflight usage and launch Codex
  */
 
 import { Command } from 'commander';
@@ -34,13 +34,13 @@ function assertHandoffReason(value: string): HandoffDocument['reason'] {
 const program = new Command();
 
 program
-  .name('relay')
-  .description('Cross-agent handoff tool for Cursor, Claude Code, and Codex')
+  .name('baton')
+  .description('Cross-agent work baton for Cursor, Claude Code, Codex, and Gemini')
   .version('0.1.0');
 
 program
   .command('init')
-  .description('Set up relay in the current project for usage-limit handoffs')
+  .description('Set up baton in the current project for usage-limit handoffs')
   .action(async () => {
     const { runInit } = await import('./commands/init.js');
     await runInit(process.cwd());
@@ -61,7 +61,7 @@ program
   .command('usage')
   .description('Print current usage-limit status')
   .requiredOption('--from <agent>', 'Which agent usage source to read')
-  .option('--cwd <path>', 'Working directory to use for relay cache', process.cwd())
+  .option('--cwd <path>', 'Working directory to use for baton cache', process.cwd())
   .option('--json', 'Print machine-readable JSON', false)
   .option('--refresh', 'Bypass cache and fetch fresh usage if possible', false)
   .action(async (opts: { from: string; cwd: string; json: boolean; refresh: boolean }) => {
@@ -74,7 +74,7 @@ program
   .command('guard')
   .description('Claude hook guard: block when usage limit threshold is crossed')
   .requiredOption('--from <agent>', 'Which agent usage source to guard')
-  .option('--cwd <path>', 'Working directory to use for relay cache', process.cwd())
+  .option('--cwd <path>', 'Working directory to use for baton cache', process.cwd())
   .option('--hook', 'Read Claude hook JSON from stdin and emit hook JSON', false)
   .option('--phase <phase>', 'Hook phase label for non-JSON invocations')
   .option('--refresh', 'Bypass cache and fetch fresh usage if possible', false)

@@ -42,11 +42,11 @@ export async function runCodex(cwd: string, rawArgs: string[] = []): Promise<voi
 
   console.log(chalk.yellow(`Codex usage preflight: ${formatCodexUsageTrigger(trigger)}`));
   const choice = await select({
-    message: 'Relay detected high Codex usage. What should happen next?',
+    message: 'Baton detected high Codex usage. What should happen next?',
     choices: [
       { name: 'Continue in Codex', value: 'continue' },
       { name: 'Create handoff now', value: 'handoff' },
-      { name: 'Run relay pickup', value: 'pickup' },
+      { name: 'Run baton pickup', value: 'pickup' },
     ],
   });
 
@@ -65,9 +65,9 @@ export async function runCodex(cwd: string, rawArgs: string[] = []): Promise<voi
 
 function withUsageWarningPrompt(args: string[], summary: string): string[] {
   const warning = [
-    `Relay usage warning: ${summary}.`,
+    `Baton usage warning: ${summary}.`,
     'Before doing more work, ask the user whether to continue in Codex with remaining quota or prepare a handoff.',
-    'If the user chooses handoff, run `relay handoff --from codex --reason rate-limit`, then tell the user to run `relay pickup`.',
+    'If the user chooses handoff, run `baton handoff --from codex --reason rate-limit`, then tell the user to run `baton pickup`.',
   ].join(' ');
 
   const promptIndex = findPromptIndex(args);

@@ -3,7 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import type { HandoffDocument } from '../types.js';
 import { redactSecrets } from '../extractors/transcript/common.js';
-import { getHandoffDir, ensureRelayDirs } from '../config.js';
+import { getHandoffDir, ensureBatonDirs } from '../config.js';
 
 const REASON_LABEL: Record<HandoffDocument['reason'], string> = {
   rate_limit: 'Usage limit reached',
@@ -12,7 +12,7 @@ const REASON_LABEL: Record<HandoffDocument['reason'], string> = {
 
 /** Write a handoff document and return its file path */
 export function writeHandoff(doc: HandoffDocument, cwd: string): string {
-  ensureRelayDirs(cwd);
+  ensureBatonDirs(cwd);
   const dir = getHandoffDir(cwd);
   const filename = `HANDOFF-${doc.id}.md`;
   const filePath = path.join(dir, filename);
@@ -55,7 +55,7 @@ function renderHandoff(doc: HandoffDocument): string {
     ? `\`\`\`diff\n${doc.git.diff}\n\`\`\``
     : '(no uncommitted diff)';
 
-  return `# Relay Handoff: ${doc.taskDescription ?? 'Untitled Task'}
+  return `# Baton Handoff: ${doc.taskDescription ?? 'Untitled Task'}
 ## Metadata
 
 | Field | Value |

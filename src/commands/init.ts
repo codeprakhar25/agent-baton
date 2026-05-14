@@ -1,8 +1,8 @@
 /**
- * relay init
+ * baton init
  *
- * Bootstrap relay for usage-limit handoffs in the current project.
- * Claude usage-limit hooks run relay guard directly.
+ * Bootstrap baton for usage-limit handoffs in the current project.
+ * Claude usage-limit hooks run baton guard directly.
  */
 
 import fs from 'fs';
@@ -10,7 +10,7 @@ import path from 'path';
 import os from 'os';
 import chalk from 'chalk';
 import { execSync } from 'child_process';
-import { ensureRelayDirs, saveConfig, getRelayDir } from '../config.js';
+import { ensureBatonDirs, saveConfig, getBatonDir, getGlobalConfigPath } from '../config.js';
 import type { AgentName } from '../types.js';
 
 function detectAgents(cwd: string): AgentName[] {
@@ -44,12 +44,8 @@ function isBinAvailable(bin: string): boolean {
 function updateGitignore(cwd: string): void {
   const gitignorePath = path.join(cwd, '.gitignore');
   const entries = [
-    '# agent-relay internals (handoffs are committed, internals are not)',
-    '.relay/watch-state.json',
-    '.relay/status.json',
-    '.relay/usage-cache.json',
-    '.relay/pending-transfer.json',
-    '.relay/config.json',
+    '# agent-baton local overrides/hooks',
+    '.baton/',
   ];
 
   let content = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, 'utf8') : '';
@@ -68,7 +64,7 @@ function installClaudeUsageHooks(cwd: string): void {
 
   const settings = readJsonObject(settingsPath);
   const hooks = readJsonObjectValue(settings.hooks);
-  const command = 'relay guard --from claude --hook';
+  const command = 'baton guard --from claude --hook';
 
   hooks.SessionStart = upsertHookGroup(hooks.SessionStart, {
     matcher: 'startup|resume',
@@ -123,11 +119,12 @@ function firstCommand(group: Record<string, unknown>): string | undefined {
 }
 
 export async function runInit(cwd: string): Promise<void> {
-  console.log(chalk.bold('\nrelay init\n'));
+  console.log(chalk.bold('\nbaton init\n'));
 
-  ensureRelayDirs(cwd);
+  ensureBatonDirs(cwd);
   saveConfig({}, cwd);
-  console.log(chalk.green('✓') + ` Created ${getRelayDir(cwd)}/`);
+  console.log(chalk.green('✓') + ` Created project state: ${getBatonDir(cwd)}/`);
+  console.log(chalk.green('✓') + ` Wrote global config: ${getGlobalConfigPath()}`);
 
   const agents = detectAgents(cwd);
   if (agents.length) {
@@ -146,9 +143,9 @@ export async function runInit(cwd: string): Promise<void> {
 
   console.log(chalk.bold('\nSetup complete!\n'));
   console.log('Useful commands:');
-  console.log(`  ${chalk.cyan('relay usage --from claude')}  — inspect Claude usage cache/API status`);
-  console.log(`  ${chalk.cyan('relay codex')}                — preflight Codex usage before launching`);
-  console.log(`  ${chalk.cyan('relay watch --from codex')}   — monitor Codex rollout usage limits`);
-  console.log(`  ${chalk.cyan('relay pickup')}               — transfer to another agent when a handoff is ready`);
+  console.log(`  ${chalk.cyan('baton usage --from claude')}  — inspect Claude usage cache/API status`);
+  console.log(`  ${chalk.cyan('baton codex')}                — preflight Codex usage before launching`);
+  console.log(`  ${chalk.cyan('baton watch --from codex')}   — monitor Codex rollout usage limits`);
+  console.log(`  ${chalk.cyan('baton pickup')}               — transfer to another agent when a handoff is ready`);
   console.log('');
 }

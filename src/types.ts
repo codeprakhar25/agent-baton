@@ -1,6 +1,6 @@
 export type AgentName = 'cursor' | 'claude' | 'codex' | 'gemini';
 
-export interface RelayConfig {
+export interface BatonConfig {
   agents: {
     cursor: AgentConfig;
     claude: AgentConfig;
@@ -19,6 +19,14 @@ export interface RelayConfig {
     handoff_percent: number;
     /** Automatically write a handoff when transcript text shows an actual hard limit */
     auto_handoff_on_hard_limit: boolean;
+  };
+  storage: {
+    /** Runtime state root; relative paths are expanded from the user home */
+    state_root: string;
+    /** Config root; relative paths are expanded from the user home */
+    config_root: string;
+    /** Project subdirectory naming strategy */
+    project_id_strategy: 'slug_hash';
   };
   usage_cache: {
     /** Cache TTL for manual/status lookups while usage is below the limit */

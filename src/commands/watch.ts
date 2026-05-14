@@ -1,5 +1,5 @@
 /**
- * relay watch --from <agent>
+ * baton watch --from <agent>
  *
  * Runs as a background process alongside the active agent.
  *
@@ -14,7 +14,7 @@ import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 import type { AgentName, WatchState } from '../types.js';
-import { loadConfig, getWatchStatePath, getRelayDir, getLatestHandoffPath, getUsageLimitPercent } from '../config.js';
+import { loadConfig, getWatchStatePath, getBatonDir, getLatestHandoffPath, getUsageLimitPercent } from '../config.js';
 import { captureGitState } from '../extractors/git.js';
 import { extractSession } from '../extractors/transcript/index.js';
 import { buildHandoffDoc, writeHandoff } from '../writers/handoff.js';
@@ -67,7 +67,7 @@ function saveWatchState(state: WatchState, cwd: string): void {
 }
 
 function hasPendingTransfer(cwd: string): boolean {
-  return fs.existsSync(path.join(getRelayDir(cwd), 'pending-transfer.json'));
+  return fs.existsSync(path.join(getBatonDir(cwd), 'pending-transfer.json'));
 }
 
 async function writeRateLimitHandoff(
@@ -104,7 +104,7 @@ async function writeRateLimitHandoff(
   const handoffPath = writeHandoff(doc, cwd);
 
   // Write pending transfer flag
-  fs.writeFileSync(path.join(getRelayDir(cwd), 'pending-transfer.json'), JSON.stringify({
+  fs.writeFileSync(path.join(getBatonDir(cwd), 'pending-transfer.json'), JSON.stringify({
     agent,
     reason: 'rate_limit',
     handoffPath,
@@ -112,7 +112,7 @@ async function writeRateLimitHandoff(
   }, null, 2), 'utf8');
 
   console.error(chalk.green(`\n✓ Usage-limit handoff written to: ${handoffPath}`));
-  console.error(chalk.cyan(`\nRun:  relay pickup`));
+  console.error(chalk.cyan(`\nRun:  baton pickup`));
   console.error(chalk.cyan(`  to select the next agent and continue the task.\n`));
 }
 
@@ -132,12 +132,12 @@ async function maybeTriggerCodexUsageHandoff(
   const summary = formatCodexUsageTrigger(trigger);
   const hardLimit = Boolean(trigger.status.rateLimitReachedType);
   if (cfg.limits.mode === 'auto_handoff' || (hardLimit && cfg.limits.auto_handoff_on_hard_limit)) {
-    console.error(chalk.red.bold(`[relay watch] ${summary}`));
+    console.error(chalk.red.bold(`[baton watch] ${summary}`));
     await writeRateLimitHandoff('codex', transcriptPath, cwd, summary);
     return true;
   }
 
-  console.error(chalk.yellow(`[relay watch] ${summary}. Ask the user whether to continue or run relay handoff --from codex --reason rate-limit.`));
+  console.error(chalk.yellow(`[baton watch] ${summary}. Ask the user whether to continue or run baton handoff --from codex --reason rate-limit.`));
   return false;
 }
 
@@ -153,12 +153,12 @@ async function maybeTriggerClaudeUsageHandoff(
   const transcriptPath = findActiveClaudeTranscript(cwd);
   const summary = status.triggerReason ?? formatNormalizedUsage(status);
   if (cfg.limits.mode === 'auto_handoff') {
-    console.error(chalk.red.bold(`[relay watch] ${summary}`));
+    console.error(chalk.red.bold(`[baton watch] ${summary}`));
     await writeRateLimitHandoff('claude', transcriptPath, cwd, summary);
     return true;
   }
 
-  console.error(chalk.yellow(`[relay watch] ${summary}. Ask the user whether to continue or run relay handoff --from claude --reason rate-limit.`));
+  console.error(chalk.yellow(`[baton watch] ${summary}. Ask the user whether to continue or run baton handoff --from claude --reason rate-limit.`));
   return false;
 }
 
@@ -178,7 +178,7 @@ export async function runWatch(agent: AgentName, cwd: string): Promise<void> {
   const cfg = loadConfig(cwd);
   const { poll_interval_ms } = cfg.watch;
 
-  console.log(chalk.cyan(`relay watch`) + ` — monitoring ${chalk.bold(agent)} session in ${cwd}`);
+  console.log(chalk.cyan(`baton watch`) + ` — monitoring ${chalk.bold(agent)} session in ${cwd}`);
   console.log(chalk.gray(`  Usage threshold: ${getUsageLimitPercent(cfg)}%`));
   console.log(chalk.gray(`  Limit mode: ${cfg.limits.mode}`));
   console.log(chalk.gray(`  Press Ctrl+C to stop\n`));
@@ -189,7 +189,7 @@ export async function runWatch(agent: AgentName, cwd: string): Promise<void> {
     // Skip if a transfer is already pending (don't keep overwriting the handoff)
     if (hasPendingTransfer(cwd)) {
       const latestHandoff = getLatestHandoffPath(cwd);
-      console.log(chalk.yellow(`[relay watch] Transfer pending. Run relay pickup to continue.`));
+      console.log(chalk.yellow(`[baton watch] Transfer pending. Run baton pickup to continue.`));
       if (latestHandoff) console.log(chalk.gray(`  Handoff: ${latestHandoff}`));
       return;
     }
@@ -201,7 +201,7 @@ export async function runWatch(agent: AgentName, cwd: string): Promise<void> {
 
     const transcriptPath = findActiveTranscript(agent, cwd);
     if (!transcriptPath) {
-      console.log(chalk.gray(`[relay watch] No active ${agent} transcript found. Waiting...`));
+      console.log(chalk.gray(`[baton watch] No active ${agent} transcript found. Waiting...`));
       return;
     }
 
@@ -218,7 +218,7 @@ export async function runWatch(agent: AgentName, cwd: string): Promise<void> {
         cwd,
       };
       saveWatchState(state, cwd);
-      console.log(chalk.gray(`[relay watch] Tracking transcript: ${path.basename(transcriptPath)}`));
+      console.log(chalk.gray(`[baton watch] Tracking transcript: ${path.basename(transcriptPath)}`));
       if (agent === 'codex') {
         await maybeTriggerCodexUsageHandoff(transcriptPath, cwd);
       }
@@ -246,10 +246,10 @@ export async function runWatch(agent: AgentName, cwd: string): Promise<void> {
       if (hit) {
         const summary = `Rate limit detected: ${hit.matchedText}`;
         if (cfg.limits.auto_handoff_on_hard_limit) {
-          console.error(chalk.red.bold(`[relay watch] ${summary}`));
+          console.error(chalk.red.bold(`[baton watch] ${summary}`));
           await writeRateLimitHandoff(agent, transcriptPath, cwd, summary);
         } else {
-          console.error(chalk.yellow(`[relay watch] ${summary}. Hard-limit auto-handoff is disabled; run relay handoff --from ${agent} --reason rate-limit when ready.`));
+          console.error(chalk.yellow(`[baton watch] ${summary}. Hard-limit auto-handoff is disabled; run baton handoff --from ${agent} --reason rate-limit when ready.`));
         }
         state.lastSeenBytes = currentSize;
         state.lastSeenAt = now;
@@ -272,14 +272,14 @@ export async function runWatch(agent: AgentName, cwd: string): Promise<void> {
     try {
       await tick();
     } catch (err) {
-      console.error(chalk.red(`[relay watch] Error during poll: ${err}`));
+      console.error(chalk.red(`[baton watch] Error during poll: ${err}`));
     }
   }, poll_interval_ms);
 
   // Clean shutdown on signals
   process.on('SIGINT', () => {
     clearInterval(interval);
-    console.log(chalk.gray('\n[relay watch] Stopped.'));
+    console.log(chalk.gray('\n[baton watch] Stopped.'));
     process.exit(0);
   });
   process.on('SIGTERM', () => {
