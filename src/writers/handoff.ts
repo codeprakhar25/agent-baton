@@ -28,6 +28,10 @@ export function writeHandoff(doc: HandoffDocument, cwd: string): string {
 }
 
 function renderHandoff(doc: HandoffDocument): string {
+  if (doc.agentAuthoredMarkdown?.trim()) {
+    return renderAgentAuthoredHandoff(doc, doc.agentAuthoredMarkdown.trim());
+  }
+
   const progressSection = doc.progressItems.length
     ? doc.progressItems.map(p => `- ${p}`).join('\n')
     : '- (no structured progress items found — review last assistant message above)';
@@ -44,6 +48,10 @@ function renderHandoff(doc: HandoffDocument): string {
     ...doc.git.modifiedFiles.map(f => `- \`${f}\` (modified)`),
     ...doc.git.untrackedFiles.map(f => `- \`${f}\` (untracked/new)`),
   ].join('\n') || '- (no uncommitted changes)';
+
+  const agentNoteSection = doc.agentNote?.trim()
+    ? doc.agentNote.trim()
+    : '(not provided)';
 
   const toolCallsSection = doc.session.recentToolCalls.length
     ? doc.session.recentToolCalls
@@ -86,6 +94,10 @@ ${modifiedSection}
 ## Current State
 
 ${doc.currentState || doc.session.lastAssistantSummary || '(not captured)'}
+
+## Agent-Written Handoff Note
+
+${agentNoteSection}
 
 ## Last User Message
 
@@ -140,6 +152,58 @@ Acknowledge this handoff by stating: what you understand the remaining task to b
 `;
 }
 
+function renderAgentAuthoredHandoff(doc: HandoffDocument, content: string): string {
+  return `${content}
+
+---
+
+## Baton Evidence Appendix
+
+${renderMetadata(doc)}
+
+## Source Handoff File
+
+${doc.sourceHandoffPath ? `\`${doc.sourceHandoffPath}\`` : '(not recorded)'}
+
+## Git Status
+
+\`\`\`
+${doc.git.status || '(clean)'}
+\`\`\`
+
+## Git Diff Stat
+
+\`\`\`
+${doc.git.diffStat || '(no changes)'}
+\`\`\`
+
+## Recent Commits
+
+\`\`\`
+${doc.git.recentCommits || '(none)'}
+\`\`\`
+
+## Uncommitted Diff
+
+${doc.git.diff ? `\`\`\`diff\n${doc.git.diff}\n\`\`\`` : '(no uncommitted diff)'}
+
+## Pickup Instruction
+
+The previous agent wrote the handoff above. Use the Baton appendix as supporting evidence. Start by stating the remaining task and the first action you will take.
+`;
+}
+
+function renderMetadata(doc: HandoffDocument): string {
+  return `| Field | Value |
+|-------|-------|
+| Handoff ID | \`${doc.id}\` |
+| Timestamp | ${doc.timestamp} |
+| From Agent | **${doc.fromAgent}** |
+| Reason | ${REASON_LABEL[doc.reason]} |
+| Git Branch | \`${doc.git.branch}\` |
+| Uncommitted Changes | ${doc.git.hasUncommittedChanges ? 'Yes' : 'No'} |`;
+}
+
 /** Generate a new handoff ID (short, timestamp-based) */
 export function newHandoffId(): string {
   const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -167,6 +231,9 @@ export function buildHandoffDoc(
       ...partial.git.untrackedFiles,
     ],
     currentState: partial.currentState ?? partial.session.lastAssistantSummary ?? '',
+    agentAuthoredMarkdown: partial.agentAuthoredMarkdown,
+    sourceHandoffPath: partial.sourceHandoffPath,
+    agentNote: partial.agentNote,
     errors: partial.errors ?? partial.session.errors ?? [],
   };
 }

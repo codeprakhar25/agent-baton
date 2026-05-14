@@ -90,11 +90,13 @@ program
   .requiredOption('--from <agent>', 'Which agent you are handing off from')
   .option('--reason <reason>', 'Why the handoff is being created: manual or rate-limit', 'manual')
   .option('--launch', 'Immediately prompt to launch the next agent', false)
-  .action(async (opts: { from: string; reason: string; launch: boolean }) => {
+  .option('--file <path>', 'Complete Markdown handoff file written by the handing-off agent')
+  .option('--agent-note <path>', 'Deprecated alias for --file')
+  .action(async (opts: { from: string; reason: string; launch: boolean; file?: string; agentNote?: string }) => {
     const agent = assertAgent(opts.from);
     const reason = assertHandoffReason(opts.reason);
     const { runHandoff } = await import('./commands/handoff.js');
-    await runHandoff(agent, process.cwd(), opts.launch, reason);
+    await runHandoff(agent, process.cwd(), opts.launch, reason, opts.file ?? opts.agentNote);
   });
 
 program

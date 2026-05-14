@@ -22,6 +22,7 @@ export async function runHandoff(
   cwd: string,
   autoLaunch = false,
   reason: HandoffDocument['reason'] = 'manual',
+  sourceHandoffPath?: string,
 ): Promise<void> {
   const cfg = loadConfig(cwd);
 
@@ -36,12 +37,19 @@ export async function runHandoff(
   const session = extractSession(fromAgent, null, cwd, cfg.handoff_extraction.max_transcript_lines);
   console.log(chalk.green('✓') + ` Session: ${session.recentToolCalls.length} recent tool calls extracted`);
 
+  const agentAuthoredMarkdown = readAgentAuthoredHandoff(sourceHandoffPath);
+  if (sourceHandoffPath) {
+    console.log(chalk.green('✓') + ' Agent-authored handoff file registered');
+  }
+
   // 3. Build and write handoff
   const doc = buildHandoffDoc({
     fromAgent,
     reason,
     git,
     session,
+    agentAuthoredMarkdown,
+    sourceHandoffPath,
   });
 
   const handoffPath = writeHandoff(doc, cwd);
@@ -56,6 +64,15 @@ export async function runHandoff(
   console.log(`Handoff file: ${chalk.cyan(handoffPath)}`);
   console.log(`\nRun ${chalk.cyan('baton pickup')} to transfer to the next agent.`);
   console.log(`Or open the handoff file to review it before transferring.\n`);
+}
+
+function readAgentAuthoredHandoff(filePath: string | undefined): string | undefined {
+  if (!filePath) return undefined;
+  try {
+    return fs.readFileSync(path.resolve(filePath), 'utf8');
+  } catch (err) {
+    throw new Error(`Failed to read agent-authored handoff at ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 function writePendingTransfer(
