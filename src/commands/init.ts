@@ -109,6 +109,43 @@ function isHookGroup(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function installCodexUsageHooks(): void {
+  const hooksPath = path.join(os.homedir(), '.codex', 'hooks.json');
+  const existing = readJsonObject(hooksPath);
+  const hooks = readJsonObjectValue(existing.hooks);
+
+  const batonGuardCommand = 'baton guard --from codex --hook';
+  const batonSessionCommand = 'baton guard --from codex --hook --phase session-start';
+
+  // SessionStart: clear threshold-notified so each new session gets a fresh check.
+  const sessionStart = Array.isArray(hooks.SessionStart) ? hooks.SessionStart as unknown[] : [];
+  const hasSessionHook = sessionStart.some(
+    g => isHookGroup(g) && firstCommand(g) === batonSessionCommand,
+  );
+  if (!hasSessionHook) {
+    hooks.SessionStart = [
+      ...sessionStart,
+      { hooks: [{ type: 'command', command: batonSessionCommand, timeout: 10 }] },
+    ];
+  }
+
+  // UserPromptSubmit: inject the usage warning once per session when threshold is crossed.
+  const promptSubmit = Array.isArray(hooks.UserPromptSubmit) ? hooks.UserPromptSubmit as unknown[] : [];
+  const hasPromptHook = promptSubmit.some(
+    g => isHookGroup(g) && firstCommand(g) === batonGuardCommand,
+  );
+  if (!hasPromptHook) {
+    hooks.UserPromptSubmit = [
+      { hooks: [{ type: 'command', command: batonGuardCommand, timeout: 10 }] },
+      ...promptSubmit,
+    ];
+  }
+
+  existing.hooks = hooks;
+  fs.mkdirSync(path.dirname(hooksPath), { recursive: true });
+  fs.writeFileSync(hooksPath, JSON.stringify(existing, null, 2), 'utf8');
+}
+
 function firstCommand(group: Record<string, unknown>): string | undefined {
   const hooks = group.hooks;
   if (!Array.isArray(hooks)) return undefined;
@@ -140,6 +177,11 @@ export async function runInit(cwd: string): Promise<void> {
 
   installClaudeUsageHooks(cwd);
   console.log(chalk.green('✓') + ' Installed Claude usage-limit hooks');
+
+  if (agents.includes('codex')) {
+    installCodexUsageHooks();
+    console.log(chalk.green('✓') + ' Installed Codex usage-limit hooks');
+  }
 
   console.log(chalk.bold('\nSetup complete!\n'));
   console.log('Useful commands:');
