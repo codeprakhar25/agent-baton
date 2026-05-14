@@ -2,7 +2,7 @@
 
 Don't lose your work when an AI coding agent hits its usage limit.
 
-`baton` monitors usage for Claude Code and Codex, warns you before the threshold, and writes a rich Markdown handoff — transcript tail, task state, full git diff — so the next agent picks up exactly where you left off.
+`baton` monitors usage for Claude Code and Codex, warns you before the threshold, and registers a rich Markdown handoff written by the active agent, with Baton metadata and git evidence appended so the next agent picks up exactly where you left off.
 
 [![npm](https://img.shields.io/npm/v/@codeprakhar25/agent-baton)](https://www.npmjs.com/package/@codeprakhar25/agent-baton)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -74,9 +74,9 @@ That's it. Every handoff is written to `~/.local/state/agent-baton/projects/<slu
 
 Baton has two integration paths and one fallback:
 
-**Claude Code** — `baton init` installs project hooks. On every session start, prompt submit, and tool call, `baton guard` reads cached usage. If you've crossed `limits.handoff_percent`, Claude is instructed to ask whether to continue or write a handoff. Tool calls are blocked until you choose.
+**Claude Code** — `baton init` installs project hooks. On every session start, prompt submit, and tool call, `baton guard` reads cached usage. If an enabled Claude window crosses its configured threshold, Claude is instructed to ask whether to continue or write a handoff. Tool calls then request your confirmation so either choice can proceed deliberately, including an agent-authored `baton handoff --file`.
 
-**Codex** — `baton codex` wraps the `codex` binary. Usage is checked before Codex launches. If you're over the threshold, Baton asks whether to continue, create a handoff, or run `baton pickup`. Continuing injects a first prompt that tells Codex to ask before doing more work.
+**Codex** — `baton codex` wraps the `codex` binary. Usage is checked before Codex launches. If you're over the threshold, Baton asks whether to continue, launch Codex to write a handoff, or run `baton pickup`. Continuing injects a first prompt that tells Codex to ask before doing more work.
 
 **Watch fallback** — `baton watch --from <agent>` monitors usage and scans transcripts for hard-limit errors (`usage limit`, `quota exceeded`, `429`). Writes a handoff automatically when `limits.auto_handoff_on_hard_limit` is true.
 
@@ -94,8 +94,8 @@ baton guard / baton codex / baton watch
   work       │      │
           continue  handoff
                      │
-              extract transcript tail
-              + git branch/status/diff
+              agent writes Markdown
+              + Baton appends evidence
                      │
               write HANDOFF-latest.md
                      │
@@ -106,10 +106,10 @@ baton guard / baton codex / baton watch
 
 Each handoff is a Markdown file with:
 
-- Task description and recent transcript-derived state
-- Recent tool calls and errors where extractable
+- Agent-authored task summary, progress, decisions, remaining work, and next step
+- Baton metadata and source handoff path
 - Git branch, status, diff stat, and last commits
-- Full uncommitted diff (truncated at `handoff_extraction.max_diff_chars`)
+- Full uncommitted diff appended as evidence (truncated at `handoff_extraction.max_diff_chars`)
 - Instructions for the next agent
 
 Git state is the durable source of truth — if transcript extraction is incomplete, the diff tells the full story.
@@ -148,6 +148,7 @@ Claude and Codex have proactive detection — Baton knows you're near the limit 
 | `baton codex [-- <args>] [prompt]` | Launch Codex with usage preflight |
 | `baton watch --from <agent>` | Monitor usage and hard-limit signals in the background |
 | `baton handoff --from <agent>` | Manually write a handoff from the current transcript and git state |
+| `baton handoff --from <agent> --file <path>` | Register a complete Markdown handoff written by the handing-off agent |
 | `baton pickup [--to <agent>]` | Launch an agent with a prompt pointing to the latest handoff |
 
 ```bash
@@ -164,6 +165,7 @@ baton codex -- --model o4-mini        # pass codex flags
 # Handoff
 baton handoff --from codex
 baton handoff --from claude --reason rate-limit
+baton handoff --from claude --reason rate-limit --file /tmp/baton-handoff.md
 baton handoff --from claude --launch   # write + immediately run pickup
 
 # Pickup
@@ -205,7 +207,19 @@ Per-project overrides (never committed):
   "limits": {
     "mode": "ask",
     "handoff_percent": 95,
-    "auto_handoff_on_hard_limit": true
+    "auto_handoff_on_hard_limit": true,
+    "windows": {
+      "claude": {
+        "five_hour": { "enabled": true, "handoff_percent": 95 },
+        "weekly": { "enabled": true, "handoff_percent": 98 },
+        "extra": { "enabled": true, "handoff_percent": 95 }
+      },
+      "codex": {
+        "five_hour": { "enabled": true, "handoff_percent": 95 },
+        "weekly": { "enabled": true, "handoff_percent": 95 },
+        "unknown": { "enabled": true, "handoff_percent": 95 }
+      }
+    }
   },
   "usage_cache": {
     "safe_ttl_ms": 900000,
@@ -235,7 +249,8 @@ Per-project overrides (never committed):
 | Key | Default | Description |
 |-----|---------|-------------|
 | `limits.mode` | `"ask"` | `ask` — prompt before acting; `auto_handoff` — write immediately; `warn_only` — log only |
-| `limits.handoff_percent` | `95` | Usage % that triggers the warning or handoff |
+| `limits.handoff_percent` | `95` | Legacy fallback percentage when a per-window policy is missing |
+| `limits.windows.<agent>.<window>` | see config | Per-agent, per-window threshold policy |
 | `limits.auto_handoff_on_hard_limit` | `true` | Auto-write a handoff when hard-limit text appears |
 | `usage_cache.safe_ttl_ms` | `900000` | Cache TTL (ms) when usage is below the near-limit band |
 | `usage_cache.near_limit_ttl_ms` | `60000` | Cache TTL (ms) once usage is near the threshold |
