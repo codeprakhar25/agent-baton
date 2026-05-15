@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type { NormalizedUsageStatus, BatonConfig, UsageWindowName } from '../types.js';
-import { getUsageCachePath, getUsageWindowLimit } from '../config.js';
+import { computeTtl, getUsageCachePath, getUsageWindowLimit } from '../config.js';
 import { findActiveCodexTranscript } from './transcript/codex.js';
 import { tailFile } from './transcript/common.js';
 
@@ -261,17 +261,12 @@ function writeUsageCache(cwd: string, status: NormalizedUsageStatus): void {
 function isUsageCacheFresh(status: NormalizedUsageStatus, config: BatonConfig): boolean {
   const fetched = Date.parse(status.fetchedAt);
   if (!Number.isFinite(fetched)) return false;
-
   const maxPercent = Math.max(
     status.fiveHourPercent ?? 0,
     status.weeklyPercent ?? 0,
     status.extraUsagePercent ?? 0,
   );
-  const ttl = maxPercent >= config.usage_cache.near_limit_percent
-    ? config.usage_cache.near_limit_ttl_ms
-    : config.usage_cache.safe_ttl_ms;
-
-  return Date.now() - fetched < ttl;
+  return Date.now() - fetched < computeTtl(maxPercent, config);
 }
 
 function markCacheAge(status: NormalizedUsageStatus): NormalizedUsageStatus {
