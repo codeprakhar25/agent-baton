@@ -57,8 +57,10 @@ function updateGitignore(cwd: string): void {
   }
 }
 
-function installClaudeUsageHooks(cwd: string): void {
-  const claudeDir = path.join(cwd, '.claude');
+function installClaudeUsageHooks(_cwd: string): void {
+  // Install globally so hooks fire in all projects, not just the initialized one.
+  // baton guard reads per-project config dynamically via hookInput.cwd at runtime.
+  const claudeDir = path.join(os.homedir(), '.claude');
   const settingsPath = path.join(claudeDir, 'settings.json');
   fs.mkdirSync(claudeDir, { recursive: true });
 
@@ -176,7 +178,7 @@ export async function runInit(cwd: string): Promise<void> {
   }
 
   installClaudeUsageHooks(cwd);
-  console.log(chalk.green('✓') + ' Installed Claude usage-limit hooks');
+  console.log(chalk.green('✓') + ` Installed Claude usage-limit hooks → ${path.join(os.homedir(), '.claude', 'settings.json')}`);
 
   if (agents.includes('codex')) {
     installCodexUsageHooks();

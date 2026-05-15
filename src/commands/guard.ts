@@ -174,8 +174,11 @@ function buildClaudeChoiceMessage(usage: NormalizedUsageStatus, refreshError?: s
   return [
     `${usage.triggerReason ?? 'Claude usage limit threshold crossed'}.`,
     refreshError ? `Fresh usage check failed, using cached usage: ${refreshError}.` : '',
-    'Before doing more work, ask the user to choose: continue in Claude with the remaining quota, or write a handoff and stop.',
-    'If the user chooses handoff, write the complete Markdown handoff file yourself, then run `baton handoff --from claude --reason rate-limit --file <path>`, and tell the user to run `baton pickup`.',
+    'Before doing more work, you MUST call the AskUserQuestion tool with exactly one question:',
+    `question="Claude usage is at limit. How would you like to proceed?", header="Quota check", multiSelect=false,`,
+    `options=[{label:"Continue in Claude", description:"Keep working with the remaining quota in this session"},`,
+    `{label:"Write handoff & stop", description:"I will write a Baton handoff doc so you can pick up in another agent"}].`,
+    'If the user chooses "Write handoff & stop": write the complete Markdown handoff file yourself, then run `baton handoff --from claude --reason rate-limit --file <path>`, and tell the user to run `baton pickup`.',
     'Do not write `pending-transfer.json` unless a handoff is requested or created.',
     'If a Baton permission prompt appears, proceed only when the user confirms that choice.',
   ].filter(Boolean).join(' ');
