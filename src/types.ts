@@ -27,6 +27,8 @@ export interface BatonConfig {
     handoff_percent: number;
     /** Automatically write a handoff when transcript text shows an actual hard limit */
     auto_handoff_on_hard_limit: boolean;
+    /** How many percent below handoff_percent to start warning (warn_at = handoff_percent - this) */
+    warning_buffer_percent: number;
     /** Per-agent usage window thresholds */
     windows: {
       claude: AgentUsageWindowLimits;
@@ -42,12 +44,18 @@ export interface BatonConfig {
     project_id_strategy: 'slug_hash';
   };
   usage_cache: {
-    /** Cache TTL for manual/status lookups while usage is below the limit */
+    /** Cache TTL when usage is far from the warning band */
     safe_ttl_ms: number;
-    /** Cache TTL once usage approaches the handoff threshold */
+    /** Cache TTL when usage is in the approach zone (warn_at - buffer to warn_at) */
+    approach_ttl_ms: number;
+    /** Cache TTL when usage is in the warning band (>= warn_at) */
     near_limit_ttl_ms: number;
-    /** Start refreshing more aggressively at this percentage */
+    /** Legacy: start refreshing more aggressively at this percentage */
     near_limit_percent: number;
+    /** Min interval between fresh API fetches triggered by PreToolUse hooks */
+    pretool_ttl_ms: number;
+    /** Min interval before re-notifying the user after they chose to continue */
+    notify_cooldown_ms: number;
   };
   usage_sources: {
     claude: {
@@ -185,4 +193,18 @@ export interface WatchState {
   lastSeenBytes: number;
   lastSeenAt: number;
   cwd: string;
+}
+
+export interface NotificationState {
+  /** When the user was first notified upon entering the warning band */
+  warningBandNotifiedAt: string | null;
+  warningBandPercent: number | null;
+  /** When the user was first notified upon crossing the hard handoff threshold */
+  thresholdNotifiedAt: string | null;
+  thresholdPercent: number | null;
+  /** Most recent notification timestamp — used for cooldown */
+  lastNotifiedAt: string | null;
+  lastNotifiedPercent: number | null;
+  /** Last time a PreToolUse hook triggered a fresh fetch */
+  preToolLastFetchAt: string | null;
 }

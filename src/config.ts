@@ -2,7 +2,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import os from 'os';
 import path from 'path';
-import type { AgentName, BatonConfig, UsageWindowLimit, UsageWindowName } from './types.js';
+import type { AgentName, BatonConfig, NotificationState, UsageWindowLimit, UsageWindowName } from './types.js';
 
 const DEFAULT_CONFIG: BatonConfig = {
   agents: {
@@ -18,6 +18,7 @@ const DEFAULT_CONFIG: BatonConfig = {
     mode: 'ask',
     handoff_percent: 95,
     auto_handoff_on_hard_limit: true,
+    warning_buffer_percent: 5,
     windows: {
       claude: {
         five_hour: { enabled: true, handoff_percent: 95 },
@@ -38,8 +39,11 @@ const DEFAULT_CONFIG: BatonConfig = {
   },
   usage_cache: {
     safe_ttl_ms: 15 * 60 * 1000,
+    approach_ttl_ms: 5 * 60 * 1000,
     near_limit_ttl_ms: 60 * 1000,
     near_limit_percent: 75,
+    pretool_ttl_ms: 60 * 1000,
+    notify_cooldown_ms: 15 * 60 * 1000,
   },
   usage_sources: {
     claude: {
@@ -88,6 +92,48 @@ export function getUsageCachePath(cwd: string = process.cwd()): string {
 
 export function getThresholdNotifiedPath(cwd: string = process.cwd()): string {
   return path.join(getBatonDir(cwd), 'threshold-notified.json');
+}
+
+export function computeTtl(maxPercent: number, config: BatonConfig): number {
+  const warnAt = config.limits.handoff_percent - config.limits.warning_buffer_percent;
+  const approachAt = warnAt - config.limits.warning_buffer_percent;
+  if (maxPercent >= warnAt) return config.usage_cache.near_limit_ttl_ms;
+  if (maxPercent >= approachAt) return config.usage_cache.approach_ttl_ms;
+  return config.usage_cache.safe_ttl_ms;
+}
+
+export function readNotificationState(cwd: string): NotificationState {
+  try {
+    const filePath = getThresholdNotifiedPath(cwd);
+    if (!fs.existsSync(filePath)) return emptyNotificationState();
+    return { ...emptyNotificationState(), ...(JSON.parse(fs.readFileSync(filePath, 'utf8')) as Partial<NotificationState>) };
+  } catch {
+    return emptyNotificationState();
+  }
+}
+
+export function writeNotificationState(cwd: string, patch: Partial<NotificationState>): void {
+  const current = readNotificationState(cwd);
+  const updated = { ...current, ...patch };
+  const filePath = getThresholdNotifiedPath(cwd);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(updated, null, 2), 'utf8');
+}
+
+export function clearNotificationState(cwd: string): void {
+  try { fs.unlinkSync(getThresholdNotifiedPath(cwd)); } catch { /* already absent */ }
+}
+
+function emptyNotificationState(): NotificationState {
+  return {
+    warningBandNotifiedAt: null,
+    warningBandPercent: null,
+    thresholdNotifiedAt: null,
+    thresholdPercent: null,
+    lastNotifiedAt: null,
+    lastNotifiedPercent: null,
+    preToolLastFetchAt: null,
+  };
 }
 
 export function loadConfig(cwd: string = process.cwd()): BatonConfig {
