@@ -61,7 +61,7 @@ That's it. Every handoff is written to `~/.local/state/agent-baton/projects/<slu
 
 Baton has two integration paths and one fallback:
 
-**Claude Code** — `baton init` installs global hooks into `~/.claude/settings.json` so every Claude session in every project is covered. On `SessionStart`, `UserPromptSubmit`, and `PreToolUse`, `baton guard` reads cached usage with a three-tier TTL (15 min when far, 5 min approaching, 60 s in the warning band). When you cross the warning band or the hard threshold, Claude is instructed to fire an interactive `AskUserQuestion` prompt to continue or write a handoff. A re-notify cooldown prevents spam if you choose to continue, and `PreToolUse` keeps watching so a limit hit mid-task still gets caught within a tool call or two.
+**Claude Code** — `baton init` installs global hooks into `~/.claude/settings.json` so every Claude session in every project is covered. On `SessionStart`, `UserPromptSubmit`, and `PreToolUse`, `baton guard` reads cached usage with a three-tier TTL (15 min below 50%, 5 min from 50% to the warning band, no cache TTL in the warning band). `SessionStart` and `UserPromptSubmit` always refresh Claude usage before the next model response. When you cross the warning band or the hard threshold, Claude is instructed to fire an interactive `AskUserQuestion` prompt to continue or write a handoff. Soft warnings respect a re-notify cooldown, but the hard threshold is rechecked on every user prompt. `PreToolUse` keeps a separate fetch throttle so tool-heavy turns do not spam the usage API.
 
 **Codex** — `baton codex` wraps the `codex` binary. Usage is checked before Codex launches. If you're over the threshold, Baton asks whether to continue, launch Codex to write a handoff, or run `baton pickup`. Continuing injects a first prompt that tells Codex to ask before doing more work.
 
@@ -211,8 +211,9 @@ Per-project overrides (never committed):
   },
   "usage_cache": {
     "safe_ttl_ms": 900000,
+    "approach_percent": 50,
     "approach_ttl_ms": 300000,
-    "near_limit_ttl_ms": 60000,
+    "near_limit_ttl_ms": 0,
     "near_limit_percent": 75,
     "pretool_ttl_ms": 60000,
     "notify_cooldown_ms": 900000
@@ -244,9 +245,10 @@ Per-project overrides (never committed):
 | `limits.warning_buffer_percent` | `5` | Warning band starts this many points below `handoff_percent` (default warns at 90%) |
 | `limits.windows.<agent>.<window>` | see config | Per-agent, per-window threshold policy |
 | `limits.auto_handoff_on_hard_limit` | `true` | Auto-write a handoff when hard-limit text appears |
-| `usage_cache.safe_ttl_ms` | `900000` | Cache TTL when usage is far from the warning band (15 min) |
-| `usage_cache.approach_ttl_ms` | `300000` | Cache TTL when approaching the warning band (5 min) |
-| `usage_cache.near_limit_ttl_ms` | `60000` | Cache TTL inside the warning band (60 s) |
+| `usage_cache.safe_ttl_ms` | `900000` | Cache TTL below `approach_percent` (15 min) |
+| `usage_cache.approach_percent` | `50` | Usage percentage where the 5-minute approach TTL starts |
+| `usage_cache.approach_ttl_ms` | `300000` | Cache TTL from `approach_percent` up to the warning band (5 min) |
+| `usage_cache.near_limit_ttl_ms` | `0` | Cache TTL inside the warning band; `0` means recheck at hook boundaries |
 | `usage_cache.pretool_ttl_ms` | `60000` | Minimum interval between fresh API fetches triggered by `PreToolUse` |
 | `usage_cache.notify_cooldown_ms` | `900000` | Cooldown before re-notifying after the user chose continue |
 | `handoff_extraction.max_diff_chars` | `8000` | Per-file diff truncation cap |

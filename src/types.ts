@@ -46,7 +46,9 @@ export interface BatonConfig {
   usage_cache: {
     /** Cache TTL when usage is far from the warning band */
     safe_ttl_ms: number;
-    /** Cache TTL when usage is in the approach zone (warn_at - buffer to warn_at) */
+    /** Percentage where the shorter approach TTL starts */
+    approach_percent: number;
+    /** Cache TTL when usage is in the approach zone (approach_percent to warn_at) */
     approach_ttl_ms: number;
     /** Cache TTL when usage is in the warning band (>= warn_at) */
     near_limit_ttl_ms: number;

@@ -3,6 +3,7 @@ import path from 'path';
 import type { AgentName, BatonConfig, NotificationState, NormalizedUsageStatus } from '../types.js';
 import {
   clearNotificationState,
+  computeTtl,
   getBatonDir,
   loadConfig,
   readNotificationState,
@@ -112,7 +113,7 @@ async function handleClaudeUserPromptSubmit(
   hookInput: HookInput,
   phase: string | undefined,
 ): Promise<void> {
-  const result = await lookupClaudeUsage({ cwd, config: cfg, refresh: false });
+  const result = await lookupClaudeUsage({ cwd, config: cfg, refresh: true });
   if (!result.status) {
     emitHookJson({ suppressOutput: true });
     return;
@@ -165,25 +166,23 @@ async function handleClaudeUserPromptSubmit(
 // ─── Claude: PreToolUse ──────────────────────────────────────────────────────
 
 async function handleClaudePreToolUse(cwd: string, cfg: BatonConfig, phase: string | undefined): Promise<void> {
-  // Fast cache-only check — skip entirely if far from warning band.
   const cached = await lookupClaudeUsage({ cwd, config: cfg, cacheOnly: true });
-  if (!cached.status || getMaxPercent(cached.status) < getWarnAt(cfg)) {
-    emitHookJson({ suppressOutput: true });
-    return;
-  }
-
-  // In warning band: decide whether to do a fresh fetch based on pretool TTL.
   const state = readNotificationState(cwd);
-  const lastFetch = state.preToolLastFetchAt ? Date.parse(state.preToolLastFetchAt) : 0;
-  const needsFetch = !Number.isFinite(lastFetch) || Date.now() - lastFetch > cfg.usage_cache.pretool_ttl_ms;
+  const needsFetch = !cached.status || !isDynamicCacheFresh(cached.status, cfg);
+  const canFetch = canFetchFromPreTool(state, cfg);
 
   let usage = cached.status;
-  if (needsFetch) {
+  if (needsFetch && canFetch) {
+    writeNotificationState(cwd, { preToolLastFetchAt: new Date().toISOString() });
     const fresh = await lookupClaudeUsage({ cwd, config: cfg, refresh: true });
     if (fresh.status) {
       usage = fresh.status;
-      writeNotificationState(cwd, { preToolLastFetchAt: new Date().toISOString() });
     }
+  }
+
+  if (!usage) {
+    emitHookJson({ suppressOutput: true });
+    return;
   }
 
   const maxPercent = getMaxPercent(usage);
@@ -215,6 +214,17 @@ async function handleClaudePreToolUse(cwd: string, cfg: BatonConfig, phase: stri
       permissionDecisionReason: buildClaudePreToolMessage(usage),
     },
   });
+}
+
+function isDynamicCacheFresh(status: NormalizedUsageStatus, cfg: BatonConfig): boolean {
+  const fetched = Date.parse(status.fetchedAt);
+  if (!Number.isFinite(fetched)) return false;
+  return Date.now() - fetched < computeTtl(getMaxPercent(status), cfg);
+}
+
+function canFetchFromPreTool(state: NotificationState, cfg: BatonConfig): boolean {
+  const lastFetch = state.preToolLastFetchAt ? Date.parse(state.preToolLastFetchAt) : 0;
+  return !Number.isFinite(lastFetch) || Date.now() - lastFetch > cfg.usage_cache.pretool_ttl_ms;
 }
 
 // ─── Codex guard ─────────────────────────────────────────────────────────────
@@ -294,11 +304,10 @@ function resolveNotifySeverity(
   state: NotificationState,
   cfg: BatonConfig,
 ): 'soft' | 'hard' | null {
+  if (maxPercent >= handoffPercent) return 'hard';
   if (maxPercent < warnAt) return null;
-  const severity: 'soft' | 'hard' = maxPercent >= handoffPercent ? 'hard' : 'soft';
-  if (!state.warningBandNotifiedAt) return severity;
-  if (severity === 'hard' && !state.thresholdNotifiedAt) return 'hard';
-  if (isCooldownExpired(state, cfg.usage_cache.notify_cooldown_ms)) return severity;
+  if (!state.warningBandNotifiedAt) return 'soft';
+  if (isCooldownExpired(state, cfg.usage_cache.notify_cooldown_ms)) return 'soft';
   return null;
 }
 

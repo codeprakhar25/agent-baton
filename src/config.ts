@@ -39,8 +39,9 @@ const DEFAULT_CONFIG: BatonConfig = {
   },
   usage_cache: {
     safe_ttl_ms: 15 * 60 * 1000,
+    approach_percent: 50,
     approach_ttl_ms: 5 * 60 * 1000,
-    near_limit_ttl_ms: 60 * 1000,
+    near_limit_ttl_ms: 0,
     near_limit_percent: 75,
     pretool_ttl_ms: 60 * 1000,
     notify_cooldown_ms: 15 * 60 * 1000,
@@ -96,7 +97,7 @@ export function getThresholdNotifiedPath(cwd: string = process.cwd()): string {
 
 export function computeTtl(maxPercent: number, config: BatonConfig): number {
   const warnAt = config.limits.handoff_percent - config.limits.warning_buffer_percent;
-  const approachAt = warnAt - config.limits.warning_buffer_percent;
+  const approachAt = Math.min(config.usage_cache.approach_percent, warnAt);
   if (maxPercent >= warnAt) return config.usage_cache.near_limit_ttl_ms;
   if (maxPercent >= approachAt) return config.usage_cache.approach_ttl_ms;
   return config.usage_cache.safe_ttl_ms;
@@ -256,6 +257,7 @@ function normalizeConfig(config: BatonConfig, raw: unknown): BatonConfig {
     config.limits.handoff_percent = DEFAULT_CONFIG.limits.handoff_percent;
   }
 
+  normalizeUsageCache(config);
   normalizeWindowLimits(config, rawLimits, rawThresholds);
 
   if (config.storage.project_id_strategy !== 'slug_hash') {
@@ -263,6 +265,19 @@ function normalizeConfig(config: BatonConfig, raw: unknown): BatonConfig {
   }
 
   return config;
+}
+
+function normalizeUsageCache(config: BatonConfig): void {
+  config.usage_cache = {
+    ...DEFAULT_CONFIG.usage_cache,
+    ...(config.usage_cache ?? {}),
+  };
+
+  if (!Number.isFinite(config.usage_cache.approach_percent)) {
+    config.usage_cache.approach_percent = DEFAULT_CONFIG.usage_cache.approach_percent;
+  }
+
+  config.usage_cache.approach_percent = Math.max(0, Math.min(100, config.usage_cache.approach_percent));
 }
 
 function normalizeWindowLimits(
