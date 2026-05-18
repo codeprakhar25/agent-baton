@@ -11,5 +11,5 @@ wiki/
 
 # agent-baton local overrides/hooks
 
-# claude-mem auto-generated session context
+# Auto-generated agent context files
 AGENTS.md
