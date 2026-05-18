@@ -10,3 +10,6 @@ dist/
 wiki/
 
 # agent-baton local overrides/hooks
+
+# claude-mem auto-generated session context
+AGENTS.md
