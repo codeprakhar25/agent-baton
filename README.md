@@ -10,22 +10,9 @@ Don't lose your work when an AI coding agent hits its usage limit.
 
 ---
 
-```
-$ baton usage --from claude
+![Baton interactive quota prompt inside Claude Code](demo.png)
 
-  claude usage — 96% used
-  ⚠  Near limit  (handoff threshold: 95%)
-  Window resets in 44 min
-
----
-
-  ⚠  Claude usage is at 96% — handoff threshold crossed.
-
-  What do you want to do?
-
-  › Continue  (use remaining quota, Claude will ask again on next prompt)
-    Create handoff now  →  baton pickup
-```
+When Claude crosses the threshold, Baton injects an interactive `AskUserQuestion` prompt — you choose between continuing on remaining quota or writing a handoff so you can pick up in another agent.
 
 ---
 
@@ -74,7 +61,7 @@ That's it. Every handoff is written to `~/.local/state/agent-baton/projects/<slu
 
 Baton has two integration paths and one fallback:
 
-**Claude Code** — `baton init` installs project hooks. On every session start, prompt submit, and tool call, `baton guard` reads cached usage. If an enabled Claude window crosses its configured threshold, Claude is instructed to ask whether to continue or write a handoff. Tool calls then request your confirmation so either choice can proceed deliberately, including an agent-authored `baton handoff --file`.
+**Claude Code** — `baton init` installs global hooks into `~/.claude/settings.json` so every Claude session in every project is covered. On `SessionStart`, `UserPromptSubmit`, and `PreToolUse`, `baton guard` reads cached usage with a three-tier TTL (15 min when far, 5 min approaching, 60 s in the warning band). When you cross the warning band or the hard threshold, Claude is instructed to fire an interactive `AskUserQuestion` prompt to continue or write a handoff. A re-notify cooldown prevents spam if you choose to continue, and `PreToolUse` keeps watching so a limit hit mid-task still gets caught within a tool call or two.
 
 **Codex** — `baton codex` wraps the `codex` binary. Usage is checked before Codex launches. If you're over the threshold, Baton asks whether to continue, launch Codex to write a handoff, or run `baton pickup`. Continuing injects a first prompt that tells Codex to ask before doing more work.
 
@@ -207,6 +194,7 @@ Per-project overrides (never committed):
   "limits": {
     "mode": "ask",
     "handoff_percent": 95,
+    "warning_buffer_percent": 5,
     "auto_handoff_on_hard_limit": true,
     "windows": {
       "claude": {
@@ -223,8 +211,11 @@ Per-project overrides (never committed):
   },
   "usage_cache": {
     "safe_ttl_ms": 900000,
+    "approach_ttl_ms": 300000,
     "near_limit_ttl_ms": 60000,
-    "near_limit_percent": 75
+    "near_limit_percent": 75,
+    "pretool_ttl_ms": 60000,
+    "notify_cooldown_ms": 900000
   },
   "usage_sources": {
     "claude": {
@@ -249,11 +240,15 @@ Per-project overrides (never committed):
 | Key | Default | Description |
 |-----|---------|-------------|
 | `limits.mode` | `"ask"` | `ask` — prompt before acting; `auto_handoff` — write immediately; `warn_only` — log only |
-| `limits.handoff_percent` | `95` | Legacy fallback percentage when a per-window policy is missing |
+| `limits.handoff_percent` | `95` | Hard threshold; Baton blocks and asks at this level |
+| `limits.warning_buffer_percent` | `5` | Warning band starts this many points below `handoff_percent` (default warns at 90%) |
 | `limits.windows.<agent>.<window>` | see config | Per-agent, per-window threshold policy |
 | `limits.auto_handoff_on_hard_limit` | `true` | Auto-write a handoff when hard-limit text appears |
-| `usage_cache.safe_ttl_ms` | `900000` | Cache TTL (ms) when usage is below the near-limit band |
-| `usage_cache.near_limit_ttl_ms` | `60000` | Cache TTL (ms) once usage is near the threshold |
+| `usage_cache.safe_ttl_ms` | `900000` | Cache TTL when usage is far from the warning band (15 min) |
+| `usage_cache.approach_ttl_ms` | `300000` | Cache TTL when approaching the warning band (5 min) |
+| `usage_cache.near_limit_ttl_ms` | `60000` | Cache TTL inside the warning band (60 s) |
+| `usage_cache.pretool_ttl_ms` | `60000` | Minimum interval between fresh API fetches triggered by `PreToolUse` |
+| `usage_cache.notify_cooldown_ms` | `900000` | Cooldown before re-notifying after the user chose continue |
 | `handoff_extraction.max_diff_chars` | `8000` | Per-file diff truncation cap |
 
 Environment overrides: `AGENT_BATON_CONFIG_HOME`, `AGENT_BATON_STATE_HOME`, `XDG_CONFIG_HOME`, `XDG_STATE_HOME`.
@@ -272,7 +267,7 @@ Ensure Claude Code is OAuth-authenticated and `~/.claude/.credentials.json` exis
 The target CLI is not on `PATH`. Install it or check your shell config.
 
 **Hooks not firing**
-Re-run `baton init` in the project directory. Check that `.claude/settings.json` contains the Baton guard hooks under `hooks`.
+Re-run `baton init` in the project directory. Check that `~/.claude/settings.json` (global) contains the Baton guard hooks under `hooks`. Codex hooks live in `~/.codex/hooks.json`.
 
 ---
 
