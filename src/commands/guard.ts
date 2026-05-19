@@ -193,8 +193,8 @@ async function handleClaudePreToolUse(cwd: string, cfg: BatonConfig, phase: stri
     return;
   }
 
-  // Respect cooldown: if user already answered and cooldown hasn't expired, let them work.
-  if (!isCooldownExpired(state, cfg.usage_cache.notify_cooldown_ms)) {
+  // A recent soft warning must not suppress a newly hard threshold.
+  if (isRecentHardNotification(state, cfg.limits.handoff_percent, cfg.usage_cache.pretool_ttl_ms)) {
     emitHookJson({ suppressOutput: true });
     return;
   }
@@ -225,6 +225,12 @@ function isDynamicCacheFresh(status: NormalizedUsageStatus, cfg: BatonConfig): b
 function canFetchFromPreTool(state: NotificationState, cfg: BatonConfig): boolean {
   const lastFetch = state.preToolLastFetchAt ? Date.parse(state.preToolLastFetchAt) : 0;
   return !Number.isFinite(lastFetch) || Date.now() - lastFetch > cfg.usage_cache.pretool_ttl_ms;
+}
+
+function isRecentHardNotification(state: NotificationState, handoffPercent: number, cooldownMs: number): boolean {
+  return typeof state.lastNotifiedPercent === 'number'
+    && state.lastNotifiedPercent >= handoffPercent
+    && !isCooldownExpired(state, cooldownMs);
 }
 
 // ─── Codex guard ─────────────────────────────────────────────────────────────

@@ -5,7 +5,6 @@
  *   baton init                    — set up baton in current project
  *   baton usage --from <agent>    — print current usage-limit status
  *   baton guard --from <agent>    — hook command for usage-limit blocking
- *   baton watch --from <agent>    — monitor usage limits and warn or hand off
  *   baton handoff --from <agent>  — manually capture task state + handoff file
  *   baton pickup [--to <agent>]   — choose next agent and launch it with handoff
  *   baton codex [-- <args>]       — preflight usage and launch Codex
@@ -44,17 +43,6 @@ program
   .action(async () => {
     const { runInit } = await import('./commands/init.js');
     await runInit(process.cwd());
-  });
-
-program
-  .command('watch')
-  .description('Background daemon: monitor usage limits and warn or hand off')
-  .requiredOption('--from <agent>', 'Which agent to watch')
-  .option('--cwd <path>', 'Working directory to monitor', process.cwd())
-  .action(async (opts: { from: string; cwd: string }) => {
-    const agent = assertAgent(opts.from);
-    const { runWatch } = await import('./commands/watch.js');
-    await runWatch(agent, opts.cwd);
   });
 
 program

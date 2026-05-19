@@ -189,7 +189,6 @@ export async function runInit(cwd: string): Promise<void> {
   console.log('Useful commands:');
   console.log(`  ${chalk.cyan('baton usage --from claude')}  — inspect Claude usage cache/API status`);
   console.log(`  ${chalk.cyan('baton codex')}                — preflight Codex usage before launching`);
-  console.log(`  ${chalk.cyan('baton watch --from codex')}   — monitor Codex rollout usage limits`);
   console.log(`  ${chalk.cyan('baton pickup')}               — transfer to another agent when a handoff is ready`);
   console.log('');
 }

@@ -59,16 +59,14 @@ That's it. Every handoff is written to `~/.local/state/agent-baton/projects/<slu
 
 ## How It Works
 
-Baton has two integration paths and one fallback:
+Baton has two integration paths:
 
 **Claude Code** — `baton init` installs global hooks into `~/.claude/settings.json` so every Claude session in every project is covered. On `SessionStart`, `UserPromptSubmit`, and `PreToolUse`, `baton guard` reads cached usage with a three-tier TTL (15 min below 50%, 5 min from 50% to the warning band, no cache TTL in the warning band). `SessionStart` and `UserPromptSubmit` always refresh Claude usage before the next model response. When you cross the warning band or the hard threshold, Claude is instructed to fire an interactive `AskUserQuestion` prompt to continue or write a handoff. Soft warnings respect a re-notify cooldown, but the hard threshold is rechecked on every user prompt. `PreToolUse` keeps a separate fetch throttle so tool-heavy turns do not spam the usage API.
 
 **Codex** — `baton codex` wraps the `codex` binary. Usage is checked before Codex launches. If you're over the threshold, Baton asks whether to continue, launch Codex to write a handoff, or run `baton pickup`. Continuing injects a first prompt that tells Codex to ask before doing more work.
 
-**Watch fallback** — `baton watch --from <agent>` monitors usage and scans transcripts for hard-limit errors (`usage limit`, `quota exceeded`, `429`). Writes a handoff automatically when `limits.auto_handoff_on_hard_limit` is true.
-
 ```
-baton guard / baton codex / baton watch
+baton guard / baton codex
           │
           ▼
     fetch usage (cached)
@@ -133,7 +131,6 @@ Claude and Codex have proactive detection — Baton knows you're near the limit 
 | `baton usage --from <agent>` | Print current usage-limit status |
 | `baton guard --from claude --hook` | Claude hook driver (called automatically) |
 | `baton codex [-- <args>] [prompt]` | Launch Codex with usage preflight |
-| `baton watch --from <agent>` | Monitor usage and hard-limit signals in the background |
 | `baton handoff --from <agent>` | Manually write a handoff from the current transcript and git state |
 | `baton handoff --from <agent> --file <path>` | Register a complete Markdown handoff written by the handing-off agent |
 | `baton pickup [--to <agent>]` | Launch an agent with a prompt pointing to the latest handoff |
@@ -159,10 +156,6 @@ baton handoff --from claude --launch   # write + immediately run pickup
 baton pickup                           # choose agent interactively
 baton pickup --to claude
 baton pickup --to codex
-
-# Watch (background, fallback path)
-baton watch --from codex
-baton watch --from cursor
 ```
 
 ---
@@ -229,9 +222,6 @@ Per-project overrides (never committed):
     "include_git_diff": true,
     "max_diff_chars": 8000,
     "scan_secrets": true
-  },
-  "watch": {
-    "poll_interval_ms": 3000
   }
 }
 ```
